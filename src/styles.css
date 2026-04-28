@@ -420,6 +420,17 @@ h2 {
   text-transform: uppercase;
 }
 
+.sequence-note {
+  padding: 10px 12px;
+  border: 1px solid #d7e5ef;
+  border-radius: 6px;
+  background: #f3f8fb;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .form-grid {
   display: grid;
   gap: 10px;
@@ -462,6 +473,10 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 96px;
   gap: 10px;
+}
+
+.customer-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .checkbox-row {

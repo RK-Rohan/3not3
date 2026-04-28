@@ -59,15 +59,23 @@ type CreatePaymentData = {
   url?: string | null;
   paymentID?: string | null;
   bkashURL?: string | null;
+  depositURL?: string | null;
+  hostedCheckoutURL?: string | null;
   data?: {
+    localPaymentId?: string | null;
+    clientPaymentId?: string | null;
     paymentID?: string | null;
     bkashURL?: string | null;
     paymentURL?: string | null;
+    depositURL?: string | null;
+    hostedCheckoutURL?: string | null;
     amount?: string | null;
     currency?: string | null;
     reference?: string | null;
+    merchantReference?: string | null;
     assignedAccountNumber?: string | null;
     assignedAccountType?: string | null;
+    assignedWalletAccountMode?: string | null;
     paymentCreateTime?: string | null;
   };
 };
@@ -97,9 +105,12 @@ const apiBaseFromEnv =
 
 const defaultForm = {
   amount: "1000",
-  orderId: `3N3-${Date.now()}`,
-  reference: `3NOT3-${Date.now().toString().slice(-6)}`,
-  payerReference: "3not3-player-1001",
+  merchantOrderId: `TEST-ORDER-${Date.now()}`,
+  merchantReference: `TEST-REF-${Date.now().toString().slice(-6)}`,
+  customerName: "Test Customer",
+  customerPhone: "+8801700000000",
+  customerEmail: "customer@example.com",
+  webhookUrl: import.meta.env.VITE_DEMO_MERCHANT_WEBHOOK_URL || "",
   email: import.meta.env.VITE_DEMO_MERCHANT_EMAIL || "",
   password: import.meta.env.VITE_DEMO_MERCHANT_PASSWORD || "",
 };
@@ -138,6 +149,7 @@ const methods: PaymentMethod[] = [
     id: "bkash-free",
     label: "Bkash Free",
     category: "e-wallets",
+    enabled: true,
     recommended: true,
     logo: "/payment-icons/bkash.svg",
     badge: "0% COMMISSION",
@@ -415,11 +427,24 @@ function buildPaymentResult(
   const data = response.data;
   const details = data?.data;
   const checkoutUrl =
-    data?.url || data?.bkashURL || details?.bkashURL || details?.paymentURL || "";
-  const paymentId = data?.paymentID || details?.paymentID || "";
+    data?.url ||
+    data?.depositURL ||
+    data?.hostedCheckoutURL ||
+    data?.bkashURL ||
+    details?.depositURL ||
+    details?.hostedCheckoutURL ||
+    details?.bkashURL ||
+    details?.paymentURL ||
+    "";
+  const paymentId =
+    data?.paymentID ||
+    details?.paymentID ||
+    details?.localPaymentId ||
+    details?.clientPaymentId ||
+    "";
 
   if (!checkoutUrl || !paymentId) {
-    throw new Error("FastPSP did not return a bKash checkout URL and payment ID.");
+    throw new Error("FastPSP did not return a hosted deposit URL and payment ID.");
   }
 
   return {
@@ -427,9 +452,9 @@ function buildPaymentResult(
     checkoutUrl,
     amount: details?.amount || "",
     currency: details?.currency || "BDT",
-    reference: details?.reference || "",
+    reference: details?.merchantReference || details?.reference || "",
     assignedAccount: [
-      details?.assignedAccountType,
+      details?.assignedWalletAccountMode || details?.assignedAccountType,
       details?.assignedAccountNumber,
     ]
       .filter(Boolean)
@@ -448,7 +473,7 @@ function App() {
   const [activeCategory, setActiveCategory] = useState<MethodCategory | "all">(
     "all",
   );
-  const [selectedMethod, setSelectedMethod] = useState("bkash");
+  const [selectedMethod, setSelectedMethod] = useState("bkash-free");
   const [form, setForm] = useState(defaultForm);
   const [autoOpen, setAutoOpen] = useState(false);
   const [accessToken, setAccessToken] = useState("");
@@ -526,6 +551,22 @@ function App() {
       return;
     }
 
+    if (!form.merchantOrderId.trim() || !form.merchantReference.trim()) {
+      setLastError("Merchant order ID and merchant reference are required.");
+      setSteps({ ...initialSteps, login: "error" });
+      return;
+    }
+
+    if (
+      !form.customerName.trim() &&
+      !form.customerPhone.trim() &&
+      !form.customerEmail.trim()
+    ) {
+      setLastError("Add at least one customer identifier.");
+      setSteps({ ...initialSteps, login: "error" });
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -547,15 +588,28 @@ function App() {
       updateStep("login", "done");
       updateStep("create", "running");
 
+      const payerReference =
+        form.customerPhone.trim() ||
+        form.customerEmail.trim() ||
+        form.customerName.trim() ||
+        form.merchantReference.trim();
+
       const paymentResponse = await postJson<CreatePaymentData>(
         apiBaseUrl,
         "/create-payment",
         {
-          id: form.orderId.trim(),
+          merchant_order_id: form.merchantOrderId.trim(),
+          merchant_reference: form.merchantReference.trim(),
           amount: amount.toFixed(2),
-          reference: form.reference.trim(),
           currency: "BDT",
-          payerReference: form.payerReference.trim() || form.reference.trim(),
+          payerReference,
+          customer_name: form.customerName.trim() || undefined,
+          customer_phone: form.customerPhone.trim() || undefined,
+          customer_email: form.customerEmail.trim() || undefined,
+          success_url: `${window.location.origin}/payment/success`,
+          failure_url: `${window.location.origin}/payment/failure`,
+          cancel_url: `${window.location.origin}/payment/cancel`,
+          webhook_url: form.webhookUrl.trim() || undefined,
         },
         token,
       );
@@ -623,8 +677,8 @@ function App() {
       <main className="deposit-frame">
         <section className="notice-band">
           <div>
-            <p className="eyebrow">3not3 Merchant Sandbox</p>
-            <h1>Make a deposit</h1>
+            <p className="eyebrow">Merchant Checkout Test</p>
+            <h1>Deposit request</h1>
           </div>
           <div className="notice-meta">
             <span>BDT wallet</span>
@@ -669,15 +723,21 @@ function App() {
             ))}
           </section>
 
-          <aside className="checkout-panel" aria-label="Gateway sequence">
+          <aside className="checkout-panel" aria-label="FastPSP merchant request">
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Gateway Sequence</p>
+                <p className="eyebrow">Merchant Request</p>
                 <h2>{selectedPaymentMethod.label}</h2>
               </div>
               <span className="method-pill">
                 {selectedPaymentMethod.enabled ? "Live API" : "Soon"}
               </span>
+            </div>
+
+            <div className="sequence-note">
+              Merchant posts customer and order data to FastPSP. FastPSP
+              creates the selected payment method and returns the hosted
+              deposit URL.
             </div>
 
             <div className="form-grid">
@@ -729,32 +789,64 @@ function App() {
                 </label>
               </div>
               <label>
-                Order ID
+                Merchant Order ID
                 <input
-                  value={form.orderId}
+                  value={form.merchantOrderId}
                   onChange={(event) =>
-                    handleFieldChange("orderId", event.target.value)
+                    handleFieldChange("merchantOrderId", event.target.value)
                   }
                   spellCheck={false}
                 />
               </label>
               <label>
-                Reference
+                Merchant Reference
                 <input
-                  value={form.reference}
+                  value={form.merchantReference}
                   onChange={(event) =>
-                    handleFieldChange("reference", event.target.value)
+                    handleFieldChange("merchantReference", event.target.value)
+                  }
+                  spellCheck={false}
+                />
+              </label>
+              <div className="split-fields customer-fields">
+                <label>
+                  Customer Name
+                  <input
+                    value={form.customerName}
+                    onChange={(event) =>
+                      handleFieldChange("customerName", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  Customer Phone
+                  <input
+                    value={form.customerPhone}
+                    onChange={(event) =>
+                      handleFieldChange("customerPhone", event.target.value)
+                    }
+                    spellCheck={false}
+                  />
+                </label>
+              </div>
+              <label>
+                Customer Email
+                <input
+                  value={form.customerEmail}
+                  onChange={(event) =>
+                    handleFieldChange("customerEmail", event.target.value)
                   }
                   spellCheck={false}
                 />
               </label>
               <label>
-                Payer Reference
+                Webhook URL
                 <input
-                  value={form.payerReference}
+                  value={form.webhookUrl}
                   onChange={(event) =>
-                    handleFieldChange("payerReference", event.target.value)
+                    handleFieldChange("webhookUrl", event.target.value)
                   }
+                  placeholder="https://merchant.example.com/webhook"
                   spellCheck={false}
                 />
               </label>
@@ -783,7 +875,7 @@ function App() {
                 ) : (
                   <CreditCard size={18} />
                 )}
-                Create bKash Payment
+                Post to FastPSP
               </button>
               <button
                 className="icon-action"
@@ -825,8 +917,8 @@ function TopBar() {
   return (
     <header className="top-bar">
       <div className="brand-lockup">
-        <div className="brand-mark">3N</div>
-        <strong>3not3</strong>
+        <div className="brand-mark">TM</div>
+        <strong>Test Merchant</strong>
       </div>
       <nav className="nav-strip" aria-label="Portal navigation">
         <a>IPL 2026</a>
@@ -936,8 +1028,8 @@ function FlowTimeline({ steps }: { steps: FlowSteps }) {
     label: string;
   }> = [
     { key: "login", label: "Merchant login" },
-    { key: "create", label: "Create payment" },
-    { key: "redirect", label: "Checkout URL" },
+    { key: "create", label: "FastPSP create" },
+    { key: "redirect", label: "Hosted deposit" },
     { key: "status", label: "Status check" },
   ];
 
@@ -1028,7 +1120,7 @@ function ResultPanel({
             </strong>
           </div>
           <div className="result-row">
-            <span>Reference</span>
+            <span>Merchant Ref</span>
             <strong>{paymentResult.reference || "-"}</strong>
           </div>
           <div className="result-row">
@@ -1036,7 +1128,7 @@ function ResultPanel({
             <strong>{paymentResult.assignedAccount || "-"}</strong>
           </div>
           <div className="result-row stacked">
-            <span>Checkout URL</span>
+            <span>Hosted Deposit URL</span>
             <button
               className="copy-button wide"
               onClick={() => onCopy("url", paymentResult.checkoutUrl)}
