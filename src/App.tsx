@@ -100,22 +100,30 @@ type FlowSteps = {
   status: FlowStepStatus;
 };
 
-const apiBaseFromEnv =
-  import.meta.env.VITE_FASTPSP_API_URL || "http://localhost:5000/api/v1";
+class ApiRequestError extends Error {
+  status: number;
 
-const demoAmounts = [
-  "10",
-  "20",
-  "50",
-  "100",
-  "250",
-  "500",
-  "1000",
-  "1500",
-  "2500",
-  "5000",
-];
-const phonePrefixes = ["13", "14", "15", "16", "17", "18", "19"];
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
+}
+
+const apiBaseFromEnv =
+  import.meta.env.VITE_API_URL || "http://localhost:5000/api/v1";
+const demoCurrency = import.meta.env.VITE_CURRENCY || "BDT";
+const demoOrderIdPrefix =
+  import.meta.env.VITE_ORDER_ID_PREFIX || "TEST-ORDER";
+const demoReferencePrefix =
+  import.meta.env.VITE_REFERENCE_PREFIX || "TEST-REF";
+const merchantEmail = import.meta.env.VITE_MERCHANT_EMAIL || "";
+const merchantPassword = import.meta.env.VITE_MERCHANT_PASSWORD || "";
+const merchantWebhookUrl = import.meta.env.VITE_MERCHANT_WEBHOOK_URL || "";
+const customerName = import.meta.env.VITE_CUSTOMER_NAME || "";
+const customerPhone = import.meta.env.VITE_CUSTOMER_PHONE || "";
+const customerEmail = import.meta.env.VITE_CUSTOMER_EMAIL || "";
+const accessTokenStorageKey = "fastpsp-merchant-access-token";
 
 function randomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -125,27 +133,19 @@ function randomDigits(length: number) {
   return Array.from({ length }, () => randomInt(0, 9)).join("");
 }
 
-function createRandomPaymentFields() {
+function createGeneratedPaymentFields() {
   const now = Date.now();
   const orderSuffix = `${now}${randomDigits(3)}`;
-  const referenceSuffix = `${now.toString().slice(-6)}${randomDigits(2)}`;
-  const phonePrefix = phonePrefixes[randomInt(0, phonePrefixes.length - 1)];
+  const referenceSuffix = `${now}${randomDigits(2)}`;
 
   return {
-    amount: demoAmounts[randomInt(0, demoAmounts.length - 1)],
-    merchantOrderId: `TEST-ORDER-${orderSuffix}`,
-    merchantReference: `TEST-REF-${referenceSuffix}`,
-    customerPhone: `+880${phonePrefix}${randomDigits(8)}`,
+    merchantOrderId: `${demoOrderIdPrefix}-${orderSuffix}`,
+    merchantReference: `${demoReferencePrefix}-${referenceSuffix}`,
   };
 }
 
 const defaultForm = {
-  ...createRandomPaymentFields(),
-  customerName: "Test Customer",
-  customerEmail: "customer@example.com",
-  webhookUrl: import.meta.env.VITE_DEMO_MERCHANT_WEBHOOK_URL || "",
-  email: import.meta.env.VITE_DEMO_MERCHANT_EMAIL || "",
-  password: import.meta.env.VITE_DEMO_MERCHANT_PASSWORD || "",
+  amount: "",
 };
 
 const methods: PaymentMethod[] = [
@@ -404,7 +404,7 @@ const sections: Array<{
 
 const currencyFormatter = new Intl.NumberFormat("en-BD", {
   style: "currency",
-  currency: "BDT",
+  currency: demoCurrency,
   maximumFractionDigits: 2,
 });
 
@@ -438,7 +438,10 @@ async function postJson<T>(
   const payload = text ? (JSON.parse(text) as ApiEnvelope<T>) : {};
 
   if (!response.ok) {
-    throw new Error(readApiError(payload, response.statusText));
+    throw new ApiRequestError(
+      readApiError(payload, response.statusText),
+      response.status,
+    );
   }
 
   return payload;
@@ -484,7 +487,7 @@ function buildPaymentResult(
     paymentId,
     checkoutUrl,
     amount: details?.amount || "",
-    currency: details?.currency || "BDT",
+    currency: details?.currency || demoCurrency,
     reference: details?.merchantReference || details?.reference || "",
     assignedAccount: [
       details?.assignedWalletAccountMode || details?.assignedAccountType,
@@ -501,15 +504,35 @@ function shortToken(value: string) {
   return value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
 }
 
+function getStoredAccessToken() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.localStorage.getItem(accessTokenStorageKey) || "";
+}
+
+function persistAccessToken(value: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (value) {
+    window.localStorage.setItem(accessTokenStorageKey, value);
+    return;
+  }
+
+  window.localStorage.removeItem(accessTokenStorageKey);
+}
+
 function App() {
-  const [apiBaseUrl, setApiBaseUrl] = useState(apiBaseFromEnv);
   const [activeCategory, setActiveCategory] = useState<MethodCategory | "all">(
     "all",
   );
   const [selectedMethod, setSelectedMethod] = useState("bkash-free");
+  const [isAmountModalOpen, setIsAmountModalOpen] = useState(false);
   const [form, setForm] = useState(defaultForm);
-  const [autoOpen, setAutoOpen] = useState(false);
-  const [accessToken, setAccessToken] = useState("");
+  const [accessToken, setAccessToken] = useState(() => getStoredAccessToken());
   const [paymentResult, setPaymentResult] = useState<PaymentResult | null>(null);
   const [statusResponse, setStatusResponse] =
     useState<ApiEnvelope<unknown> | null>(null);
@@ -554,7 +577,7 @@ function App() {
     const amount = Number(form.amount);
     return Number.isFinite(amount) && amount > 0
       ? currencyFormatter.format(amount)
-      : "BDT 0.00";
+      : `${demoCurrency} 0.00`;
   }, [form.amount]);
 
   const handleFieldChange = (field: keyof typeof form, value: string) => {
@@ -563,19 +586,37 @@ function App() {
 
   const handleMethodSelect = (methodId: string) => {
     setSelectedMethod(methodId);
-    setForm((current) => ({
-      ...current,
-      ...createRandomPaymentFields(),
-    }));
+    setForm(defaultForm);
     setPaymentResult(null);
     setStatusResponse(null);
     setLastError("");
     setSteps(initialSteps);
     setCopied("");
+    setIsAmountModalOpen(true);
   };
 
   const updateStep = (step: keyof FlowSteps, status: FlowStepStatus) => {
     setSteps((current) => ({ ...current, [step]: status }));
+  };
+
+  const storeAccessToken = (value: string) => {
+    setAccessToken(value);
+    persistAccessToken(value);
+  };
+
+  const loginMerchant = async () => {
+    const authResponse = await postJson<AuthData>(apiBaseFromEnv, "/merchant/login", {
+      email: merchantEmail.trim(),
+      password: merchantPassword,
+    });
+    const token = authResponse.data?.accessToken;
+
+    if (!token) {
+      throw new Error("Merchant login did not return an access token.");
+    }
+
+    storeAccessToken(token);
+    return token;
   };
 
   const createBkashPayment = async () => {
@@ -591,23 +632,13 @@ function App() {
       return;
     }
 
-    if (!form.email.trim() || !form.password) {
+    if (!merchantEmail.trim() || !merchantPassword) {
       setLastError("Merchant email and password are required.");
       setSteps({ ...initialSteps, login: "error" });
       return;
     }
 
-    if (!form.merchantOrderId.trim() || !form.merchantReference.trim()) {
-      setLastError("Merchant order ID and merchant reference are required.");
-      setSteps({ ...initialSteps, login: "error" });
-      return;
-    }
-
-    if (
-      !form.customerName.trim() &&
-      !form.customerPhone.trim() &&
-      !form.customerEmail.trim()
-    ) {
+    if (!customerName.trim() && !customerPhone.trim() && !customerEmail.trim()) {
       setLastError("Add at least one customer identifier.");
       setSteps({ ...initialSteps, login: "error" });
       return;
@@ -616,58 +647,76 @@ function App() {
     setIsSubmitting(true);
 
     try {
-      const authResponse = await postJson<AuthData>(
-        apiBaseUrl,
-        "/merchant/login",
-        {
-          email: form.email.trim(),
-          password: form.password,
-        },
-      );
-      const token = authResponse.data?.accessToken;
+      const generatedPaymentFields = createGeneratedPaymentFields();
+      let token = accessToken || getStoredAccessToken();
 
-      if (!token) {
-        throw new Error("Merchant login did not return an access token.");
+      if (token) {
+        updateStep("login", "done");
+      } else {
+        token = await loginMerchant();
+        updateStep("login", "done");
       }
 
-      setAccessToken(token);
-      updateStep("login", "done");
+      const payerReference =
+        customerPhone.trim() ||
+        customerEmail.trim() ||
+        customerName.trim() ||
+        generatedPaymentFields.merchantReference;
+
+      const paymentBody = {
+        merchant_order_id: generatedPaymentFields.merchantOrderId,
+        merchant_reference: generatedPaymentFields.merchantReference,
+        amount: amount.toFixed(2),
+        currency: demoCurrency,
+        payerReference,
+        customer_name: customerName.trim() || undefined,
+        customer_phone: customerPhone.trim() || undefined,
+        customer_email: customerEmail.trim() || undefined,
+        success_url: `${window.location.origin}/payment/success`,
+        failure_url: `${window.location.origin}/payment/failure`,
+        cancel_url: `${window.location.origin}/payment/cancel`,
+        webhook_url: merchantWebhookUrl.trim() || undefined,
+      };
+
       updateStep("create", "running");
 
-      const payerReference =
-        form.customerPhone.trim() ||
-        form.customerEmail.trim() ||
-        form.customerName.trim() ||
-        form.merchantReference.trim();
+      let paymentResponse: ApiEnvelope<CreatePaymentData>;
 
-      const paymentResponse = await postJson<CreatePaymentData>(
-        apiBaseUrl,
-        "/create-payment",
-        {
-          merchant_order_id: form.merchantOrderId.trim(),
-          merchant_reference: form.merchantReference.trim(),
-          amount: amount.toFixed(2),
-          currency: "BDT",
-          payerReference,
-          customer_name: form.customerName.trim() || undefined,
-          customer_phone: form.customerPhone.trim() || undefined,
-          customer_email: form.customerEmail.trim() || undefined,
-          success_url: `${window.location.origin}/payment/success`,
-          failure_url: `${window.location.origin}/payment/failure`,
-          cancel_url: `${window.location.origin}/payment/cancel`,
-          webhook_url: form.webhookUrl.trim() || undefined,
-        },
-        token,
-      );
+      try {
+        paymentResponse = await postJson<CreatePaymentData>(
+          apiBaseFromEnv,
+          "/create-payment",
+          paymentBody,
+          token,
+        );
+      } catch (error) {
+        if (
+          error instanceof ApiRequestError &&
+          (error.status === 401 || error.status === 403)
+        ) {
+          storeAccessToken("");
+          updateStep("login", "running");
+          token = await loginMerchant();
+          updateStep("login", "done");
+          paymentResponse = await postJson<CreatePaymentData>(
+            apiBaseFromEnv,
+            "/create-payment",
+            paymentBody,
+            token,
+          );
+        } else {
+          throw error;
+        }
+      }
+
       const nextPaymentResult = buildPaymentResult(paymentResponse);
 
       setPaymentResult(nextPaymentResult);
       updateStep("create", "done");
       updateStep("redirect", "done");
+      setIsAmountModalOpen(false);
 
-      if (autoOpen) {
-        window.open(nextPaymentResult.checkoutUrl, "_blank", "noopener,noreferrer");
-      }
+      window.open(nextPaymentResult.checkoutUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
       setLastError(error instanceof Error ? error.message : "Payment failed.");
       setSteps((current) => ({
@@ -693,7 +742,7 @@ function App() {
 
     try {
       const response = await postJson<unknown>(
-        apiBaseUrl,
+        apiBaseFromEnv,
         "/bkash/payment-status",
         { paymentID: paymentResult.paymentId },
         accessToken,
@@ -727,7 +776,7 @@ function App() {
             <h1>Deposit request</h1>
           </div>
           <div className="notice-meta">
-            <span>BDT wallet</span>
+            <span>{demoCurrency} wallet</span>
             <strong>{amountPreview}</strong>
           </div>
         </section>
@@ -786,160 +835,12 @@ function App() {
               deposit URL.
             </div>
 
-            <div className="form-grid">
-              <label>
-                API Base URL
-                <input
-                  value={apiBaseUrl}
-                  onChange={(event) => setApiBaseUrl(event.target.value)}
-                  spellCheck={false}
-                />
-              </label>
-              <label>
-                Merchant Email
-                <input
-                  autoComplete="username"
-                  value={form.email}
-                  onChange={(event) =>
-                    handleFieldChange("email", event.target.value)
-                  }
-                  placeholder="merchant@example.com"
-                />
-              </label>
-              <label>
-                Merchant Password
-                <input
-                  autoComplete="current-password"
-                  type="password"
-                  value={form.password}
-                  onChange={(event) =>
-                    handleFieldChange("password", event.target.value)
-                  }
-                  placeholder="StrongPass123!"
-                />
-              </label>
-              <div className="split-fields">
-                <label>
-                  Amount
-                  <input
-                    inputMode="decimal"
-                    value={form.amount}
-                    onChange={(event) =>
-                      handleFieldChange("amount", event.target.value)
-                    }
-                  />
-                </label>
-                <label>
-                  Currency
-                  <input value="BDT" disabled />
-                </label>
-              </div>
-              <label>
-                Merchant Order ID
-                <input
-                  value={form.merchantOrderId}
-                  onChange={(event) =>
-                    handleFieldChange("merchantOrderId", event.target.value)
-                  }
-                  spellCheck={false}
-                />
-              </label>
-              <label>
-                Merchant Reference
-                <input
-                  value={form.merchantReference}
-                  onChange={(event) =>
-                    handleFieldChange("merchantReference", event.target.value)
-                  }
-                  spellCheck={false}
-                />
-              </label>
-              <div className="split-fields customer-fields">
-                <label>
-                  Customer Name
-                  <input
-                    value={form.customerName}
-                    onChange={(event) =>
-                      handleFieldChange("customerName", event.target.value)
-                    }
-                  />
-                </label>
-                <label>
-                  Customer Phone
-                  <input
-                    value={form.customerPhone}
-                    onChange={(event) =>
-                      handleFieldChange("customerPhone", event.target.value)
-                    }
-                    spellCheck={false}
-                  />
-                </label>
-              </div>
-              <label>
-                Customer Email
-                <input
-                  value={form.customerEmail}
-                  onChange={(event) =>
-                    handleFieldChange("customerEmail", event.target.value)
-                  }
-                  spellCheck={false}
-                />
-              </label>
-              <label>
-                Webhook URL
-                <input
-                  value={form.webhookUrl}
-                  onChange={(event) =>
-                    handleFieldChange("webhookUrl", event.target.value)
-                  }
-                  placeholder="https://merchant.example.com/webhook"
-                  spellCheck={false}
-                />
-              </label>
+            <div className="sequence-note">
+              Click a payment method card to open the amount popup, then submit
+              the request to FastPSP from there.
             </div>
-
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={autoOpen}
-                onChange={(event) => setAutoOpen(event.target.checked)}
-              />
-              Open checkout after create
-            </label>
 
             {lastError ? <div className="error-box">{lastError}</div> : null}
-
-            <div className="action-row">
-              <button
-                className="primary-action"
-                disabled={!selectedPaymentMethod.enabled || isSubmitting}
-                onClick={createBkashPayment}
-                type="button"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="spin" size={18} />
-                ) : (
-                  <CreditCard size={18} />
-                )}
-                Post to FastPSP
-              </button>
-              <button
-                className="icon-action"
-                disabled={!paymentResult?.checkoutUrl}
-                onClick={() =>
-                  paymentResult &&
-                  window.open(
-                    paymentResult.checkoutUrl,
-                    "_blank",
-                    "noopener,noreferrer",
-                  )
-                }
-                title="Open checkout"
-                type="button"
-              >
-                <ShoppingCart size={18} />
-              </button>
-            </div>
 
             <FlowTimeline steps={steps} />
 
@@ -955,6 +856,82 @@ function App() {
           </aside>
         </div>
       </main>
+
+      {isAmountModalOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsAmountModalOpen(false)}
+          role="presentation"
+        >
+          <div
+            aria-labelledby="amount-modal-title"
+            aria-modal="true"
+            className="amount-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <div className="amount-modal-header">
+              <div>
+                <p className="eyebrow">Create Deposit</p>
+                <h2 id="amount-modal-title">{selectedPaymentMethod.label}</h2>
+              </div>
+              <button
+                className="modal-close"
+                onClick={() => setIsAmountModalOpen(false)}
+                title="Close"
+                type="button"
+              >
+                <XCircle size={18} />
+              </button>
+            </div>
+
+            <p className="amount-modal-copy">
+              Enter the deposit amount and submit to create the hosted checkout
+              page for this payment method.
+            </p>
+
+            <div className="form-grid">
+              <label>
+                Amount
+                <input
+                  autoFocus
+                  inputMode="decimal"
+                  placeholder={`Enter amount in ${demoCurrency}`}
+                  value={form.amount}
+                  onChange={(event) =>
+                    handleFieldChange("amount", event.target.value)
+                  }
+                />
+              </label>
+            </div>
+
+            {lastError ? <div className="error-box">{lastError}</div> : null}
+
+            <div className="modal-actions">
+              <button
+                className="secondary-action"
+                onClick={() => setIsAmountModalOpen(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-action"
+                disabled={!selectedPaymentMethod.enabled || isSubmitting}
+                onClick={createBkashPayment}
+                type="button"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="spin" size={18} />
+                ) : (
+                  <CreditCard size={18} />
+                )}
+                Post to FastPSP
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -16,4 +16,4 @@ npm install
 npm run dev
 ```
 
-Copy `.env.example` to `.env` if your FastPSP API URL, merchant login, or webhook URL differs from the defaults.
+Copy `.env.example` to `.env` if your API URL, merchant login, or webhook URL differs from the defaults.
