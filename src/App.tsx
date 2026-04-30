@@ -1062,9 +1062,8 @@ function MerchantCallbackToast({
           {isSuccess ? <CheckCircle2 size={30} /> : <Clock3 size={30} />}
         </div>
         <div className="callback-content">
-          <p className="eyebrow">Payment callback</p>
           <h2>
-            {isSuccess ? "Successfully deposit" : `Payment ${notice.status}`}
+            {isSuccess ? "Deposit Success!" : `Payment ${notice.status}`}
           </h2>
         </div>
         <button
