@@ -109,6 +109,12 @@ type MerchantCallbackNotice = {
   trxId: string;
 };
 
+type MerchantWalletState = {
+  balance: number;
+  pendingAmounts: Record<string, number>;
+  appliedPayments: Record<string, true>;
+};
+
 class ApiRequestError extends Error {
   status: number;
 
@@ -133,6 +139,12 @@ const customerName = import.meta.env.VITE_CUSTOMER_NAME || "";
 const customerPhone = import.meta.env.VITE_CUSTOMER_PHONE || "";
 const customerEmail = import.meta.env.VITE_CUSTOMER_EMAIL || "";
 const accessTokenStorageKey = "fastpsp-merchant-access-token";
+const walletStateStorageKey = "fastpsp-merchant-wallet-state";
+const defaultWalletState: MerchantWalletState = {
+  balance: 0,
+  pendingAmounts: {},
+  appliedPayments: {},
+};
 
 function randomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -534,6 +546,79 @@ function persistAccessToken(value: string) {
   window.localStorage.removeItem(accessTokenStorageKey);
 }
 
+function readWalletState(): MerchantWalletState {
+  if (typeof window === "undefined") {
+    return defaultWalletState;
+  }
+
+  const raw = window.localStorage.getItem(walletStateStorageKey);
+
+  if (!raw) {
+    return defaultWalletState;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<MerchantWalletState>;
+    return {
+      balance:
+        typeof parsed.balance === "number" && Number.isFinite(parsed.balance)
+          ? parsed.balance
+          : 0,
+      pendingAmounts:
+        parsed.pendingAmounts && typeof parsed.pendingAmounts === "object"
+          ? parsed.pendingAmounts
+          : {},
+      appliedPayments:
+        parsed.appliedPayments && typeof parsed.appliedPayments === "object"
+          ? parsed.appliedPayments
+          : {},
+    };
+  } catch {
+    return defaultWalletState;
+  }
+}
+
+function writeWalletState(nextState: MerchantWalletState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(walletStateStorageKey, JSON.stringify(nextState));
+}
+
+function rememberPendingDeposit(paymentId: string, amount: string) {
+  const numericAmount = Number(amount);
+
+  if (!paymentId || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return;
+  }
+
+  const state = readWalletState();
+  state.pendingAmounts[paymentId] = numericAmount;
+  writeWalletState(state);
+}
+
+function applyDepositSuccess(paymentId: string): MerchantWalletState {
+  const state = readWalletState();
+
+  if (!paymentId || state.appliedPayments[paymentId]) {
+    return state;
+  }
+
+  const amount = state.pendingAmounts[paymentId];
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return state;
+  }
+
+  state.balance += amount;
+  state.appliedPayments[paymentId] = true;
+  delete state.pendingAmounts[paymentId];
+  writeWalletState(state);
+
+  return state;
+}
+
 function readMerchantCallbackNotice(): MerchantCallbackNotice | null {
   if (typeof window === "undefined") {
     return null;
@@ -572,6 +657,7 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [copied, setCopied] = useState("");
+  const [walletBalance, setWalletBalance] = useState(() => readWalletState().balance);
   const [callbackNotice, setCallbackNotice] =
     useState<MerchantCallbackNotice | null>(() => readMerchantCallbackNotice());
 
@@ -624,13 +710,6 @@ function App() {
 
     return counts;
   }, []);
-
-  const amountPreview = useMemo(() => {
-    const amount = Number(form.amount);
-    return Number.isFinite(amount) && amount > 0
-      ? currencyFormatter.format(amount)
-      : `${demoCurrency} 0.00`;
-  }, [form.amount]);
 
   const handleFieldChange = (field: keyof typeof form, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -762,6 +841,7 @@ function App() {
       }
 
       const nextPaymentResult = buildPaymentResult(paymentResponse);
+      rememberPendingDeposit(nextPaymentResult.paymentId, nextPaymentResult.amount);
 
       setPaymentResult(nextPaymentResult);
       updateStep("create", "done");
@@ -818,13 +898,18 @@ function App() {
   };
 
   const dismissCallbackNotice = () => {
+    if (callbackNotice?.status === "SUCCESS" && callbackNotice.paymentId) {
+      const nextState = applyDepositSuccess(callbackNotice.paymentId);
+      setWalletBalance(nextState.balance);
+    }
+
     setCallbackNotice(null);
     window.location.replace(window.location.origin);
   };
 
   return (
     <div className="app-shell">
-      <TopBar />
+      <TopBar walletBalance={walletBalance} />
 
       <main className="deposit-frame">
         <section className="notice-band">
@@ -834,7 +919,9 @@ function App() {
           </div>
           <div className="notice-meta">
             <span>{demoCurrency} wallet</span>
-            <strong>{amountPreview}</strong>
+            <strong>
+              {demoCurrency} {walletBalance.toFixed(2)}
+            </strong>
           </div>
         </section>
 
@@ -1000,7 +1087,7 @@ function App() {
   );
 }
 
-function TopBar() {
+function TopBar({ walletBalance }: { walletBalance: number }) {
   return (
     <header className="top-bar">
       <div className="brand-lockup">
@@ -1026,7 +1113,7 @@ function TopBar() {
         </button>
         <button className="balance-chip" type="button">
           <span>BDT</span>
-          <strong>0.00</strong>
+          <strong>{walletBalance.toFixed(2)}</strong>
         </button>
         <button className="deposit-button" type="button">
           Make a Deposit
