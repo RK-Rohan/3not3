@@ -1025,9 +1025,18 @@ function App() {
             role="dialog"
           >
             <div className="amount-modal-header">
-              <div>
-                <p className="eyebrow">Create Deposit</p>
-                <h2 id="amount-modal-title">{selectedPaymentMethod.label}</h2>
+              <div className="amount-modal-method">
+                <div className="amount-modal-logo">
+                  {selectedPaymentMethod.logo ? (
+                    <img alt="" src={selectedPaymentMethod.logo} />
+                  ) : (
+                    <span>{selectedPaymentMethod.mark || selectedPaymentMethod.label.slice(0, 2)}</span>
+                  )}
+                </div>
+                <div>
+                  <p className="eyebrow">Create Deposit</p>
+                  <h2 id="amount-modal-title">{selectedPaymentMethod.label}</h2>
+                </div>
               </div>
               <button
                 className="modal-close"
@@ -1035,7 +1044,7 @@ function App() {
                 title="Close"
                 type="button"
               >
-                <XCircle size={18} />
+                <XCircle size={20} />
               </button>
             </div>
 
@@ -1045,12 +1054,15 @@ function App() {
             </p>
 
             <div className="form-grid">
-              <label>
-                Amount
+              <label htmlFor="amount-input">
+                <div className="amount-label-header">
+                  <span>Amount ({demoCurrency})</span>
+                </div>
                 <input
+                  id="amount-input"
                   autoFocus
                   inputMode="decimal"
-                  placeholder={`Enter amount in ${demoCurrency}`}
+                  placeholder={`Enter amount`}
                   value={form.amount}
                   onChange={(event) =>
                     handleFieldChange("amount", event.target.value)
