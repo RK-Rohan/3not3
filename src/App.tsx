@@ -4,13 +4,11 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
-  Copy,
   CreditCard,
   Languages,
   Loader2,
   LockKeyhole,
   PackageCheck,
-  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
@@ -650,13 +648,9 @@ function App() {
   const [form, setForm] = useState(defaultForm);
   const [accessToken, setAccessToken] = useState(() => getStoredAccessToken());
   const [paymentResult, setPaymentResult] = useState<PaymentResult | null>(null);
-  const [statusResponse, setStatusResponse] =
-    useState<ApiEnvelope<unknown> | null>(null);
   const [lastError, setLastError] = useState("");
   const [steps, setSteps] = useState<FlowSteps>(initialSteps);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
-  const [copied, setCopied] = useState("");
   const [walletBalance, setWalletBalance] = useState(() => readWalletState().balance);
   const [callbackNotice, setCallbackNotice] =
     useState<MerchantCallbackNotice | null>(() => readMerchantCallbackNotice());
@@ -719,10 +713,8 @@ function App() {
     setSelectedMethod(methodId);
     setForm(defaultForm);
     setPaymentResult(null);
-    setStatusResponse(null);
     setLastError("");
     setSteps(initialSteps);
-    setCopied("");
     setIsAmountModalOpen(true);
   };
 
@@ -752,7 +744,6 @@ function App() {
 
   const createBkashPayment = async () => {
     setLastError("");
-    setStatusResponse(null);
     setPaymentResult(null);
     setSteps({ ...initialSteps, login: "running" });
 
@@ -862,41 +853,6 @@ function App() {
     }
   };
 
-  const checkPaymentStatus = async () => {
-    if (!paymentResult?.paymentId || !accessToken) {
-      setLastError("Create a payment before checking status.");
-      return;
-    }
-
-    setLastError("");
-    setIsCheckingStatus(true);
-    updateStep("status", "running");
-
-    try {
-      const response = await postJson<unknown>(
-        apiBaseFromEnv,
-        "/bkash/payment-status",
-        { paymentID: paymentResult.paymentId },
-        accessToken,
-      );
-      setStatusResponse(response);
-      updateStep("status", "done");
-    } catch (error) {
-      updateStep("status", "error");
-      setLastError(
-        error instanceof Error ? error.message : "Status lookup failed.",
-      );
-    } finally {
-      setIsCheckingStatus(false);
-    }
-  };
-
-  const copyValue = async (label: string, value: string) => {
-    await navigator.clipboard.writeText(value);
-    setCopied(label);
-    window.setTimeout(() => setCopied(""), 1200);
-  };
-
   const dismissCallbackNotice = () => {
     if (callbackNotice?.status === "SUCCESS" && callbackNotice.paymentId) {
       const nextState = applyDepositSuccess(callbackNotice.paymentId);
@@ -968,46 +924,6 @@ function App() {
               />
             ))}
           </section>
-
-          <aside
-            className="checkout-panel hidden"
-            aria-label="FastPSP merchant request"
-          >
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Merchant Request</p>
-                <h2>{selectedPaymentMethod.label}</h2>
-              </div>
-              <span className="method-pill">
-                {selectedPaymentMethod.enabled ? "Live API" : "Soon"}
-              </span>
-            </div>
-
-            <div className="sequence-note">
-              Merchant posts customer and order data to FastPSP. FastPSP
-              creates the selected payment method and returns the hosted
-              deposit URL.
-            </div>
-
-            <div className="sequence-note">
-              Click a payment method card to open the amount popup, then submit
-              the request to FastPSP from there.
-            </div>
-
-            {lastError ? <div className="error-box">{lastError}</div> : null}
-
-            <FlowTimeline steps={steps} />
-
-            <ResultPanel
-              accessToken={accessToken}
-              copied={copied}
-              onCheckStatus={checkPaymentStatus}
-              onCopy={copyValue}
-              paymentResult={paymentResult}
-              statusResponse={statusResponse}
-              isCheckingStatus={isCheckingStatus}
-            />
-          </aside>
         </div>
       </main>
 
@@ -1092,7 +1008,7 @@ function App() {
                 ) : (
                   <CreditCard size={18} />
                 )}
-                Post to FastPSP
+                Enter
               </button>
             </div>
           </div>
@@ -1243,155 +1159,6 @@ function MethodSection({
           </button>
         ))}
       </div>
-    </div>
-  );
-}
-
-function FlowTimeline({ steps }: { steps: FlowSteps }) {
-  const rows: Array<{
-    key: keyof FlowSteps;
-    label: string;
-  }> = [
-    { key: "login", label: "Merchant login" },
-    { key: "create", label: "FastPSP create" },
-    { key: "redirect", label: "Hosted deposit" },
-    { key: "status", label: "Status check" },
-  ];
-
-  return (
-    <div className="timeline">
-      {rows.map((row) => (
-        <div key={row.key} className={`timeline-row ${steps[row.key]}`}>
-          <StatusIcon status={steps[row.key]} />
-          <span>{row.label}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function StatusIcon({ status }: { status: FlowStepStatus }) {
-  if (status === "done") {
-    return <CheckCircle2 size={16} />;
-  }
-
-  if (status === "running") {
-    return <Loader2 className="spin" size={16} />;
-  }
-
-  if (status === "error") {
-    return <XCircle size={16} />;
-  }
-
-  return <Clock3 size={16} />;
-}
-
-function ResultPanel({
-  accessToken,
-  copied,
-  isCheckingStatus,
-  onCheckStatus,
-  onCopy,
-  paymentResult,
-  statusResponse,
-}: {
-  accessToken: string;
-  copied: string;
-  isCheckingStatus: boolean;
-  onCheckStatus: () => void;
-  onCopy: (label: string, value: string) => void;
-  paymentResult: PaymentResult | null;
-  statusResponse: ApiEnvelope<unknown> | null;
-}) {
-  if (!paymentResult && !accessToken) {
-    return <div className="empty-result">No payment created yet.</div>;
-  }
-
-  return (
-    <div className="result-card">
-      {accessToken ? (
-        <div className="result-row">
-          <span>Access Token</span>
-          <button
-            className="copy-button"
-            onClick={() => onCopy("token", accessToken)}
-            title="Copy access token"
-            type="button"
-          >
-            {shortToken(accessToken)}
-            <Copy size={14} />
-          </button>
-        </div>
-      ) : null}
-
-      {paymentResult ? (
-        <>
-          <div className="result-row">
-            <span>Payment ID</span>
-            <button
-              className="copy-button"
-              onClick={() => onCopy("payment", paymentResult.paymentId)}
-              title="Copy payment ID"
-              type="button"
-            >
-              {paymentResult.paymentId}
-              <Copy size={14} />
-            </button>
-          </div>
-          <div className="result-row">
-            <span>Amount</span>
-            <strong>
-              {paymentResult.currency} {paymentResult.amount || "0.00"}
-            </strong>
-          </div>
-          <div className="result-row">
-            <span>Merchant Ref</span>
-            <strong>{paymentResult.reference || "-"}</strong>
-          </div>
-          <div className="result-row">
-            <span>Wallet Route</span>
-            <strong>{paymentResult.assignedAccount || "-"}</strong>
-          </div>
-          <div className="result-row stacked">
-            <span>Hosted Deposit URL</span>
-            <button
-              className="copy-button wide"
-              onClick={() => onCopy("url", paymentResult.checkoutUrl)}
-              title="Copy checkout URL"
-              type="button"
-            >
-              {paymentResult.checkoutUrl}
-              <Copy size={14} />
-            </button>
-          </div>
-          <button
-            className="secondary-action"
-            disabled={isCheckingStatus}
-            onClick={onCheckStatus}
-            type="button"
-          >
-            {isCheckingStatus ? (
-              <Loader2 className="spin" size={17} />
-            ) : (
-              <RefreshCw size={17} />
-            )}
-            Check Status
-          </button>
-          <details>
-            <summary>Payment JSON</summary>
-            <pre>{JSON.stringify(paymentResult.raw, null, 2)}</pre>
-          </details>
-        </>
-      ) : null}
-
-      {statusResponse ? (
-        <details open>
-          <summary>Status JSON</summary>
-          <pre>{JSON.stringify(statusResponse, null, 2)}</pre>
-        </details>
-      ) : null}
-
-      {copied ? <div className="copy-toast">Copied {copied}</div> : null}
     </div>
   );
 }
