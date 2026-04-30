@@ -721,36 +721,44 @@ pre {
   font-weight: 800;
 }
 
-.callback-toast {
+.callback-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: start;
-  margin-bottom: 26px;
-  padding: 16px 18px;
-  border: 1px solid #b9e8ce;
-  border-radius: 8px;
-  background: #eefbf4;
-  box-shadow: 0 14px 32px rgba(0, 110, 70, 0.12);
+  place-items: center;
+  padding: 22px;
+  background: rgba(8, 24, 38, 0.48);
 }
 
-.callback-toast.warning {
+.callback-modal {
+  display: grid;
+  justify-items: center;
+  width: min(420px, 100%);
+  padding: 30px;
+  border: 1px solid #b9e8ce;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(0, 38, 70, 0.25);
+  text-align: center;
+}
+
+.callback-modal.warning {
   border-color: #f4d487;
-  background: #fff8e8;
-  box-shadow: 0 14px 32px rgba(180, 110, 0, 0.12);
 }
 
 .callback-icon {
   display: grid;
-  width: 40px;
-  height: 40px;
+  width: 64px;
+  height: 64px;
   place-items: center;
+  margin-bottom: 14px;
   border-radius: 50%;
   background: #d7f5e4;
   color: #027a4f;
 }
 
-.callback-toast.warning .callback-icon {
+.callback-modal.warning .callback-icon {
   background: #ffefc4;
   color: #a86400;
 }
@@ -758,15 +766,12 @@ pre {
 .callback-content h2 {
   margin: 2px 0 8px;
   color: var(--ink);
-  font-size: 22px;
+  font-size: 26px;
 }
 
-.callback-dismiss {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border);
-  background: #ffffff;
-  color: var(--muted);
+.callback-action {
+  margin-top: 18px;
+  min-width: 160px;
 }
 
 .spin {

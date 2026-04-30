@@ -817,6 +817,11 @@ function App() {
     window.setTimeout(() => setCopied(""), 1200);
   };
 
+  const dismissCallbackNotice = () => {
+    setCallbackNotice(null);
+    window.location.replace(window.location.origin);
+  };
+
   return (
     <div className="app-shell">
       <TopBar />
@@ -836,7 +841,7 @@ function App() {
         {callbackNotice ? (
           <MerchantCallbackToast
             notice={callbackNotice}
-            onDismiss={() => setCallbackNotice(null)}
+            onDismiss={dismissCallbackNotice}
           />
         ) : null}
 
@@ -1047,26 +1052,30 @@ function MerchantCallbackToast({
   const isSuccess = notice.status === "SUCCESS";
 
   return (
-    <section
-      className={`callback-toast ${isSuccess ? "success" : "warning"}`}
-      role="status"
-    >
-      <div className="callback-icon">
-        {isSuccess ? <CheckCircle2 size={22} /> : <Clock3 size={22} />}
-      </div>
-      <div className="callback-content">
-        <p className="eyebrow">Payment callback</p>
-        <h2>{isSuccess ? "Successfully deposit" : `Payment ${notice.status}`}</h2>
-      </div>
-      <button
-        className="callback-dismiss"
-        onClick={onDismiss}
-        title="Dismiss"
-        type="button"
+    <div className="callback-modal-backdrop" role="presentation">
+      <section
+        aria-modal="true"
+        className={`callback-modal ${isSuccess ? "success" : "warning"}`}
+        role="dialog"
       >
-        <XCircle size={18} />
-      </button>
-    </section>
+        <div className="callback-icon">
+          {isSuccess ? <CheckCircle2 size={30} /> : <Clock3 size={30} />}
+        </div>
+        <div className="callback-content">
+          <p className="eyebrow">Payment callback</p>
+          <h2>
+            {isSuccess ? "Successfully deposit" : `Payment ${notice.status}`}
+          </h2>
+        </div>
+        <button
+          className="primary-action callback-action"
+          onClick={onDismiss}
+          type="button"
+        >
+          Dismiss
+        </button>
+      </section>
+    </div>
   );
 }
 
