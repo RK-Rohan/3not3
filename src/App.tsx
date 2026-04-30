@@ -969,7 +969,10 @@ function App() {
             ))}
           </section>
 
-          <aside className="checkout-panel" aria-label="FastPSP merchant request">
+          <aside
+            className="checkout-panel hidden"
+            aria-label="FastPSP merchant request"
+          >
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Merchant Request</p>
