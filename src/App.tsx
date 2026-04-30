@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   CheckCircle2,
@@ -98,6 +98,15 @@ type FlowSteps = {
   create: FlowStepStatus;
   redirect: FlowStepStatus;
   status: FlowStepStatus;
+};
+
+type MerchantCallbackNotice = {
+  status: string;
+  paymentId: string;
+  localPaymentId: string;
+  merchantOrderId: string;
+  merchantReference: string;
+  trxId: string;
 };
 
 class ApiRequestError extends Error {
@@ -525,6 +534,28 @@ function persistAccessToken(value: string) {
   window.localStorage.removeItem(accessTokenStorageKey);
 }
 
+function readMerchantCallbackNotice(): MerchantCallbackNotice | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const { pathname, searchParams } = new URL(window.location.href);
+  const status = (searchParams.get("status") || "").toUpperCase();
+
+  if (!pathname.startsWith("/payment/") || !status) {
+    return null;
+  }
+
+  return {
+    status,
+    paymentId: searchParams.get("payment_id") || "",
+    localPaymentId: searchParams.get("local_payment_id") || "",
+    merchantOrderId: searchParams.get("merchant_order_id") || "",
+    merchantReference: searchParams.get("merchant_reference") || "",
+    trxId: searchParams.get("trx_id") || "",
+  };
+}
+
 function App() {
   const [activeCategory, setActiveCategory] = useState<MethodCategory | "all">(
     "all",
@@ -541,6 +572,27 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [copied, setCopied] = useState("");
+  const [callbackNotice, setCallbackNotice] =
+    useState<MerchantCallbackNotice | null>(() => readMerchantCallbackNotice());
+
+  useEffect(() => {
+    const notice = readMerchantCallbackNotice();
+
+    if (!notice) {
+      return;
+    }
+
+    setCallbackNotice(notice);
+
+    if (notice.status === "SUCCESS") {
+      setSteps({
+        login: "done",
+        create: "done",
+        redirect: "done",
+        status: "done",
+      });
+    }
+  }, []);
 
   const selectedPaymentMethod = useMemo(
     () => methods.find((method) => method.id === selectedMethod) || methods[2],
@@ -781,6 +833,13 @@ function App() {
           </div>
         </section>
 
+        {callbackNotice ? (
+          <MerchantCallbackToast
+            notice={callbackNotice}
+            onDismiss={() => setCallbackNotice(null)}
+          />
+        ) : null}
+
         <div className="deposit-layout">
           <aside className="method-menu" aria-label="Payment method categories">
             <CategoryButton
@@ -975,6 +1034,39 @@ function TopBar() {
         </button>
       </div>
     </header>
+  );
+}
+
+function MerchantCallbackToast({
+  notice,
+  onDismiss,
+}: {
+  notice: MerchantCallbackNotice;
+  onDismiss: () => void;
+}) {
+  const isSuccess = notice.status === "SUCCESS";
+
+  return (
+    <section
+      className={`callback-toast ${isSuccess ? "success" : "warning"}`}
+      role="status"
+    >
+      <div className="callback-icon">
+        {isSuccess ? <CheckCircle2 size={22} /> : <Clock3 size={22} />}
+      </div>
+      <div className="callback-content">
+        <p className="eyebrow">Payment callback</p>
+        <h2>{isSuccess ? "Successfully deposit" : `Payment ${notice.status}`}</h2>
+      </div>
+      <button
+        className="callback-dismiss"
+        onClick={onDismiss}
+        title="Dismiss"
+        type="button"
+      >
+        <XCircle size={18} />
+      </button>
+    </section>
   );
 }
 
