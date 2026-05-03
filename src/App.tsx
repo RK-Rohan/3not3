@@ -839,7 +839,7 @@ function App() {
       updateStep("redirect", "done");
       setIsAmountModalOpen(false);
 
-      window.open(nextPaymentResult.checkoutUrl, "_blank", "noopener,noreferrer");
+      window.location.assign(nextPaymentResult.checkoutUrl);
     } catch (error) {
       setLastError(error instanceof Error ? error.message : "Payment failed.");
       setSteps((current) => ({
