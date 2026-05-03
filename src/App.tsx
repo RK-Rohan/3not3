@@ -1,18 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   CheckCircle2,
   ChevronDown,
   Clock3,
   CreditCard,
+  Gift,
+  History,
   Languages,
   Loader2,
   LockKeyhole,
+  Mail,
   PackageCheck,
+  ScrollText,
   Search,
   Settings,
   ShieldCheck,
-  ShoppingCart,
+  Trophy,
+  User,
+  WalletCards,
   Wallet,
   XCircle,
 } from "lucide-react";
@@ -165,6 +171,7 @@ function createGeneratedPaymentFields() {
 
 const defaultForm = {
   amount: "",
+  trxId: "",
 };
 
 const methods: PaymentMethod[] = [
@@ -640,6 +647,7 @@ function readMerchantCallbackNotice(): MerchantCallbackNotice | null {
 }
 
 function App() {
+  const createPaymentInFlightRef = useRef(false);
   const [activeCategory, setActiveCategory] = useState<MethodCategory | "all">(
     "all",
   );
@@ -651,6 +659,7 @@ function App() {
   const [lastError, setLastError] = useState("");
   const [steps, setSteps] = useState<FlowSteps>(initialSteps);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [bkashDirectMessage, setBkashDirectMessage] = useState("");
   const [walletBalance, setWalletBalance] = useState(() => readWalletState().balance);
   const [callbackNotice, setCallbackNotice] =
     useState<MerchantCallbackNotice | null>(() => readMerchantCallbackNotice());
@@ -714,6 +723,7 @@ function App() {
     setForm(defaultForm);
     setPaymentResult(null);
     setLastError("");
+    setBkashDirectMessage("");
     setSteps(initialSteps);
     setIsAmountModalOpen(true);
   };
@@ -742,8 +752,121 @@ function App() {
     return token;
   };
 
+  const createPaymentRequest = async (amount: number) => {
+    const generatedPaymentFields = createGeneratedPaymentFields();
+    let token = accessToken || getStoredAccessToken();
+
+    if (token) {
+      updateStep("login", "done");
+    } else {
+      token = await loginMerchant();
+      updateStep("login", "done");
+    }
+
+    const payerReference =
+      customerPhone.trim() ||
+      customerEmail.trim() ||
+      customerName.trim() ||
+      generatedPaymentFields.merchantReference;
+
+    const paymentBody = {
+      merchant_order_id: generatedPaymentFields.merchantOrderId,
+      merchant_reference: generatedPaymentFields.merchantReference,
+      amount: amount.toFixed(2),
+      currency: demoCurrency,
+      payerReference,
+      customer_name: customerName.trim() || undefined,
+      customer_phone: customerPhone.trim() || undefined,
+      customer_email: customerEmail.trim() || undefined,
+      success_url: `${window.location.origin}/payment/success`,
+      failure_url: `${window.location.origin}/payment/failure`,
+      cancel_url: `${window.location.origin}/payment/cancel`,
+      webhook_url: merchantWebhookUrl.trim() || undefined,
+    };
+
+    updateStep("create", "running");
+
+    let paymentResponse: ApiEnvelope<CreatePaymentData>;
+
+    try {
+      paymentResponse = await postJson<CreatePaymentData>(
+        apiBaseFromEnv,
+        "/create-payment",
+        paymentBody,
+        token,
+      );
+    } catch (error) {
+      if (
+        error instanceof ApiRequestError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        storeAccessToken("");
+        updateStep("login", "running");
+        token = await loginMerchant();
+        updateStep("login", "done");
+        paymentResponse = await postJson<CreatePaymentData>(
+          apiBaseFromEnv,
+          "/create-payment",
+          paymentBody,
+          token,
+        );
+      } else {
+        throw error;
+      }
+    }
+
+    const nextPaymentResult = buildPaymentResult(paymentResponse);
+    rememberPendingDeposit(nextPaymentResult.paymentId, nextPaymentResult.amount);
+    setPaymentResult(nextPaymentResult);
+    updateStep("create", "done");
+
+    return nextPaymentResult;
+  };
+
+  const pollDirectBkashStatus = async (paymentId: string) => {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const statusResponse = await fetch(
+        `${normalizeBaseUrl(apiBaseFromEnv)}/deposit/${encodeURIComponent(paymentId)}/status`,
+      );
+      const statusPayload = (await statusResponse.json().catch(() => null)) as
+        | ApiEnvelope<Record<string, unknown>>
+        | null;
+      const statusData = statusPayload?.data as Record<string, unknown> | undefined;
+
+      if (!statusResponse.ok || !statusData) {
+        continue;
+      }
+
+      const statusText =
+        typeof statusData.status === "string"
+          ? statusData.status.toUpperCase()
+          : "PENDING";
+      const message =
+        typeof statusData.message === "string"
+          ? statusData.message
+          : "Checking payment status...";
+      setBkashDirectMessage(message);
+
+      if (typeof statusData.redirectUrl === "string" && statusData.redirectUrl) {
+        window.location.assign(statusData.redirectUrl);
+        return;
+      }
+
+      if (statusText === "SUCCESS" || statusText === "FAILED" || statusText === "CANCELED") {
+        return;
+      }
+    }
+  };
+
   const createBkashPayment = async () => {
+    if (createPaymentInFlightRef.current) {
+      return;
+    }
+
+    createPaymentInFlightRef.current = true;
     setLastError("");
+    setBkashDirectMessage("");
     setPaymentResult(null);
     setSteps({ ...initialSteps, login: "running" });
 
@@ -751,6 +874,13 @@ function App() {
     if (!Number.isFinite(amount) || amount <= 0) {
       setLastError("Enter a valid deposit amount.");
       setSteps({ ...initialSteps, login: "error" });
+      return;
+    }
+
+    if (selectedMethod === "bkash" && form.trxId.trim().length < 6) {
+      setLastError("Enter a valid transaction ID.");
+      setSteps({ ...initialSteps, login: "error" });
+      createPaymentInFlightRef.current = false;
       return;
     }
 
@@ -769,77 +899,47 @@ function App() {
     setIsSubmitting(true);
 
     try {
-      const generatedPaymentFields = createGeneratedPaymentFields();
-      let token = accessToken || getStoredAccessToken();
+      const nextPaymentResult = await createPaymentRequest(amount);
 
-      if (token) {
-        updateStep("login", "done");
-      } else {
-        token = await loginMerchant();
-        updateStep("login", "done");
+      if (selectedMethod === "bkash-free") {
+        updateStep("redirect", "done");
+        setIsAmountModalOpen(false);
+        window.location.assign(nextPaymentResult.checkoutUrl);
+        return;
       }
 
-      const payerReference =
-        customerPhone.trim() ||
-        customerEmail.trim() ||
-        customerName.trim() ||
-        generatedPaymentFields.merchantReference;
+      const verifyResponse = await postJson<Record<string, unknown>>(
+        apiBaseFromEnv,
+        `/deposit/${encodeURIComponent(nextPaymentResult.paymentId)}/verify`,
+        { trx_id: form.trxId.trim() },
+      );
+      const verifyData = verifyResponse.data || {};
+      const verifyStatus =
+        typeof verifyData.status === "string"
+          ? verifyData.status.toUpperCase()
+          : "PENDING";
+      const verifyMessage =
+        typeof verifyData.message === "string"
+          ? verifyData.message
+          : "Transaction submitted. Checking status...";
 
-      const paymentBody = {
-        merchant_order_id: generatedPaymentFields.merchantOrderId,
-        merchant_reference: generatedPaymentFields.merchantReference,
-        amount: amount.toFixed(2),
-        currency: demoCurrency,
-        payerReference,
-        customer_name: customerName.trim() || undefined,
-        customer_phone: customerPhone.trim() || undefined,
-        customer_email: customerEmail.trim() || undefined,
-        success_url: `${window.location.origin}/payment/success`,
-        failure_url: `${window.location.origin}/payment/failure`,
-        cancel_url: `${window.location.origin}/payment/cancel`,
-        webhook_url: merchantWebhookUrl.trim() || undefined,
-      };
+      setBkashDirectMessage(verifyMessage);
+      updateStep("status", "running");
 
-      updateStep("create", "running");
-
-      let paymentResponse: ApiEnvelope<CreatePaymentData>;
-
-      try {
-        paymentResponse = await postJson<CreatePaymentData>(
-          apiBaseFromEnv,
-          "/create-payment",
-          paymentBody,
-          token,
-        );
-      } catch (error) {
-        if (
-          error instanceof ApiRequestError &&
-          (error.status === 401 || error.status === 403)
-        ) {
-          storeAccessToken("");
-          updateStep("login", "running");
-          token = await loginMerchant();
-          updateStep("login", "done");
-          paymentResponse = await postJson<CreatePaymentData>(
-            apiBaseFromEnv,
-            "/create-payment",
-            paymentBody,
-            token,
-          );
-        } else {
-          throw error;
-        }
+      if (typeof verifyData.redirectUrl === "string" && verifyData.redirectUrl) {
+        updateStep("status", "done");
+        updateStep("redirect", "done");
+        window.location.assign(verifyData.redirectUrl);
+        return;
       }
 
-      const nextPaymentResult = buildPaymentResult(paymentResponse);
-      rememberPendingDeposit(nextPaymentResult.paymentId, nextPaymentResult.amount);
+      if (verifyStatus === "SUCCESS" || verifyStatus === "FAILED" || verifyStatus === "CANCELED") {
+        updateStep("status", "done");
+        return;
+      }
 
-      setPaymentResult(nextPaymentResult);
-      updateStep("create", "done");
-      updateStep("redirect", "done");
-      setIsAmountModalOpen(false);
-
-      window.location.assign(nextPaymentResult.checkoutUrl);
+      await pollDirectBkashStatus(nextPaymentResult.paymentId);
+      updateStep("status", "done");
     } catch (error) {
       setLastError(error instanceof Error ? error.message : "Payment failed.");
       setSteps((current) => ({
@@ -849,6 +949,7 @@ function App() {
         redirect: current.redirect === "running" ? "error" : current.redirect,
       }));
     } finally {
+      createPaymentInFlightRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -866,66 +967,102 @@ function App() {
   return (
     <div className="app-shell">
       <TopBar walletBalance={walletBalance} />
+      <SubTopBar />
 
-      <main className="deposit-frame">
-        <section className="notice-band">
-          <div>
-            <p className="eyebrow">Merchant Checkout Test</p>
-            <h1>Deposit request</h1>
-          </div>
-          <div className="notice-meta">
-            <span>{demoCurrency} wallet</span>
-            <strong>
-              {demoCurrency} {walletBalance.toFixed(2)}
-            </strong>
-          </div>
-        </section>
-
-        {callbackNotice ? (
-          <MerchantCallbackToast
-            notice={callbackNotice}
-            onDismiss={dismissCallbackNotice}
-          />
-        ) : null}
-
-        <div className="deposit-layout">
-          <aside className="method-menu" aria-label="Payment method categories">
-            <CategoryButton
-              active={activeCategory === "all"}
-              count={categoryCounts.get("all") || 0}
-              icon={Search}
-              label="All Methods"
-              onClick={() => setActiveCategory("all")}
-            />
-            {sections.map((section) => (
-              <CategoryButton
-                key={section.id}
-                active={activeCategory === section.id}
-                count={categoryCounts.get(section.id) || 0}
-                icon={section.icon}
-                label={section.label}
-                onClick={() => setActiveCategory(section.id)}
-              />
-            ))}
-          </aside>
-
-          <section className="methods-stack" aria-label="Deposit methods">
-            {visibleSections.map((section) => (
-              <MethodSection
-                key={section.id}
-                section={section}
-                methods={
-                  section.id === "recommended"
-                    ? methods.filter((method) => method.recommended)
-                    : methods.filter((method) => method.category === section.id)
-                }
-                selectedMethod={selectedMethod}
-                onSelect={handleMethodSelect}
-              />
-            ))}
+      <div className="layout-shell">
+        <aside className="left-sidebar">
+          <section className="left-card account-card">
+            <div className="account-head">
+              <strong>№1657605995</strong>
+              <span>1/5</span>
+            </div>
+            <p>Add email</p>
+            <div className="wallet-summary">
+              <span>Bonus points</span>
+              <strong>0</strong>
+            </div>
+            <div className="wallet-summary">
+              <span>Main account ({demoCurrency})</span>
+              <strong>{walletBalance.toFixed(2)}</strong>
+            </div>
           </section>
-        </div>
-      </main>
+          <nav className="left-card left-nav">
+            <h3>MY WALLET AND BETS</h3>
+            <button type="button" className="left-nav-item active">
+              <WalletCards size={18} /> Deposit
+            </button>
+            <button type="button" className="left-nav-item">
+              <ScrollText size={18} /> Withdraw funds
+            </button>
+            <button type="button" className="left-nav-item">
+              <History size={18} /> Bet history
+            </button>
+            <button type="button" className="left-nav-item">
+              <Clock3 size={18} /> Transaction history
+            </button>
+          </nav>
+        </aside>
+
+        <main className="deposit-frame">
+          <section className="notice-band">
+            <div>
+              <p className="eyebrow">ACCOUNT 1657605995</p>
+              <h1>Select payment method to top up your account</h1>
+            </div>
+            <div className="notice-meta">
+              <span>{demoCurrency} wallet</span>
+              <strong>
+                {demoCurrency} {walletBalance.toFixed(2)}
+              </strong>
+            </div>
+          </section>
+
+          {callbackNotice ? (
+            <MerchantCallbackToast
+              notice={callbackNotice}
+              onDismiss={dismissCallbackNotice}
+            />
+          ) : null}
+
+          <div className="deposit-layout">
+            <aside className="method-menu" aria-label="Payment method categories">
+              <CategoryButton
+                active={activeCategory === "all"}
+                count={categoryCounts.get("all") || 0}
+                icon={Search}
+                label="All Methods"
+                onClick={() => setActiveCategory("all")}
+              />
+              {sections.map((section) => (
+                <CategoryButton
+                  key={section.id}
+                  active={activeCategory === section.id}
+                  count={categoryCounts.get(section.id) || 0}
+                  icon={section.icon}
+                  label={section.label}
+                  onClick={() => setActiveCategory(section.id)}
+                />
+              ))}
+            </aside>
+
+            <section className="methods-stack" aria-label="Deposit methods">
+              {visibleSections.map((section) => (
+                <MethodSection
+                  key={section.id}
+                  section={section}
+                  methods={
+                    section.id === "recommended"
+                      ? methods.filter((method) => method.recommended)
+                      : methods.filter((method) => method.category === section.id)
+                  }
+                  selectedMethod={selectedMethod}
+                  onSelect={handleMethodSelect}
+                />
+              ))}
+            </section>
+          </div>
+        </main>
+      </div>
 
       {isAmountModalOpen ? (
         <div
@@ -965,8 +1102,9 @@ function App() {
             </div>
 
             <p className="amount-modal-copy">
-              Enter the deposit amount and submit to create the hosted checkout
-              page for this payment method.
+              {selectedMethod === "bkash"
+                ? "Enter amount and transaction ID. We will submit to FastPSP and verify status."
+                : "Enter the deposit amount and submit to create the hosted checkout page for this payment method."}
             </p>
 
             <div className="form-grid">
@@ -985,9 +1123,27 @@ function App() {
                   }
                 />
               </label>
+              {selectedMethod === "bkash" ? (
+                <label htmlFor="trx-id-input">
+                  <div className="amount-label-header">
+                    <span>Transaction ID</span>
+                  </div>
+                  <input
+                    id="trx-id-input"
+                    placeholder="Enter trxID"
+                    value={form.trxId}
+                    onChange={(event) =>
+                      handleFieldChange("trxId", event.target.value)
+                    }
+                  />
+                </label>
+              ) : null}
             </div>
 
             {lastError ? <div className="error-box">{lastError}</div> : null}
+            {bkashDirectMessage ? (
+              <div className="sequence-note">{bkashDirectMessage}</div>
+            ) : null}
 
             <div className="modal-actions">
               <button
@@ -1022,23 +1178,16 @@ function TopBar({ walletBalance }: { walletBalance: number }) {
   return (
     <header className="top-bar">
       <div className="brand-lockup">
-        <div className="brand-mark">TM</div>
-        <strong>Test Merchant</strong>
+        <div className="brand-mark">3N3</div>
+        <strong>3N3</strong>
       </div>
-      <nav className="nav-strip" aria-label="Portal navigation">
-        <a>IPL 2026</a>
-        <a>Cricket</a>
-        <a>
-          Sports <ChevronDown size={14} />
-        </a>
-        <a>
-          Live <ChevronDown size={14} />
-        </a>
-        <a>
-          Casino <ChevronDown size={14} />
-        </a>
-      </nav>
       <div className="top-actions">
+        <button className="small-icon" title="Rewards" type="button">
+          <Gift size={18} />
+        </button>
+        <button className="small-icon" title="Account" type="button">
+          <User size={18} />
+        </button>
         <button className="small-icon" title="Notifications" type="button">
           <Bell size={18} />
         </button>
@@ -1055,8 +1204,37 @@ function TopBar({ walletBalance }: { walletBalance: number }) {
         <button className="small-icon" title="Settings" type="button">
           <Settings size={18} />
         </button>
+        <button className="small-icon" title="Messages" type="button">
+          <Mail size={18} />
+        </button>
       </div>
     </header>
+  );
+}
+
+function SubTopBar() {
+  return (
+    <nav className="sub-top-bar" aria-label="Secondary navigation">
+      <a>
+        <Trophy size={16} /> Top events <ChevronDown size={14} />
+      </a>
+      <a>League of wins</a>
+      <a>IPL 2026</a>
+      <a>Cricket</a>
+      <a>
+        Sports <ChevronDown size={14} />
+      </a>
+      <a>
+        Live <ChevronDown size={14} />
+      </a>
+      <a>1XGames</a>
+      <a>
+        Casino <ChevronDown size={14} />
+      </a>
+      <a>
+        More <ChevronDown size={14} />
+      </a>
+    </nav>
   );
 }
 
