@@ -823,42 +823,6 @@ function App() {
     return nextPaymentResult;
   };
 
-  const pollDirectBkashStatus = async (paymentId: string) => {
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 2000));
-      const statusResponse = await fetch(
-        `${normalizeBaseUrl(apiBaseFromEnv)}/deposit/${encodeURIComponent(paymentId)}/status`,
-      );
-      const statusPayload = (await statusResponse.json().catch(() => null)) as
-        | ApiEnvelope<Record<string, unknown>>
-        | null;
-      const statusData = statusPayload?.data as Record<string, unknown> | undefined;
-
-      if (!statusResponse.ok || !statusData) {
-        continue;
-      }
-
-      const statusText =
-        typeof statusData.status === "string"
-          ? statusData.status.toUpperCase()
-          : "PENDING";
-      const message =
-        typeof statusData.message === "string"
-          ? statusData.message
-          : "Checking payment status...";
-      setBkashDirectMessage(message);
-
-      if (typeof statusData.redirectUrl === "string" && statusData.redirectUrl) {
-        window.location.assign(statusData.redirectUrl);
-        return;
-      }
-
-      if (statusText === "SUCCESS" || statusText === "FAILED" || statusText === "CANCELED") {
-        return;
-      }
-    }
-  };
-
   const createBkashPayment = async () => {
     if (createPaymentInFlightRef.current) {
       return;
@@ -921,25 +885,20 @@ function App() {
       const verifyMessage =
         typeof verifyData.message === "string"
           ? verifyData.message
-          : "Transaction submitted. Checking status...";
+          : "Transaction submitted successfully.";
 
       setBkashDirectMessage(verifyMessage);
-      updateStep("status", "running");
-
-      if (typeof verifyData.redirectUrl === "string" && verifyData.redirectUrl) {
-        updateStep("status", "done");
-        updateStep("redirect", "done");
-        window.location.assign(verifyData.redirectUrl);
-        return;
-      }
-
-      if (verifyStatus === "SUCCESS" || verifyStatus === "FAILED" || verifyStatus === "CANCELED") {
-        updateStep("status", "done");
-        return;
-      }
-
-      await pollDirectBkashStatus(nextPaymentResult.paymentId);
       updateStep("status", "done");
+      updateStep("redirect", "done");
+
+      if (verifyStatus === "SUCCESS") {
+        const nextState = applyDepositSuccess(nextPaymentResult.paymentId);
+        setWalletBalance(nextState.balance);
+      }
+
+      setIsAmountModalOpen(false);
+      window.location.replace(window.location.origin);
+      return;
     } catch (error) {
       setLastError(error instanceof Error ? error.message : "Payment failed.");
       setSteps((current) => ({
