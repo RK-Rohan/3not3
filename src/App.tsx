@@ -1,1303 +1,845 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Bell,
-  CheckCircle2,
-  ChevronDown,
-  Clock3,
-  CreditCard,
-  Gift,
-  History,
-  Languages,
-  Loader2,
-  LockKeyhole,
-  Mail,
-  PackageCheck,
-  ScrollText,
-  Search,
-  Settings,
-  ShieldCheck,
-  Trophy,
-  User,
-  WalletCards,
-  Wallet,
-  XCircle,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+﻿import { useState } from "react";
 
-type MethodCategory =
-  | "recommended"
-  | "e-wallets"
-  | "internet-banking"
-  | "bank-transfer"
-  | "cryptocurrency";
-
-type PaymentMethod = {
-  id: string;
+type MethodTile = {
   label: string;
-  category: Exclude<MethodCategory, "recommended">;
-  enabled?: boolean;
-  recommended?: boolean;
-  logo?: string;
+  logo?: "nagad" | "bkash" | "rocket";
   badge?: string;
-  mark?: string;
+  muted?: boolean;
 };
 
-type ApiEnvelope<T> = {
-  success?: boolean;
-  statusCode?: number;
-  message?: string;
-  data?: T;
-  errors?: Array<{ field?: string; message?: string }>;
-  timestamp?: string;
-  path?: string;
-  requestId?: string;
+type MethodGroupType = {
+  title: string;
+  items: MethodTile[];
+  crypto?: boolean;
 };
 
-type AuthData = {
-  accessToken: string;
-  refreshToken?: string;
+type TransactionHistoryRow = {
+  merchant_order_id: string;
+  merchant_reference: string | null;
+  amount: string | number | null;
+  currency: string | null;
+  fastpsp_status: string | null;
+  webhook_status: string | null;
+  payment_id: string | null;
+  local_payment_id: string | null;
+  checkout_url: string | null;
+  provider: string | null;
+  trx_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-type CreatePaymentData = {
-  status?: string;
-  url?: string | null;
-  paymentID?: string | null;
-  bkashURL?: string | null;
-  depositURL?: string | null;
-  hostedCheckoutURL?: string | null;
-  data?: {
-    localPaymentId?: string | null;
-    clientPaymentId?: string | null;
-    paymentID?: string | null;
-    bkashURL?: string | null;
-    paymentURL?: string | null;
-    depositURL?: string | null;
-    hostedCheckoutURL?: string | null;
-    amount?: string | null;
-    currency?: string | null;
-    reference?: string | null;
-    merchantReference?: string | null;
-    assignedAccountNumber?: string | null;
-    assignedAccountType?: string | null;
-    assignedWalletAccountMode?: string | null;
-    paymentCreateTime?: string | null;
-  };
-};
+const categoryItems = [
+  { label: "RECOMMENDED", count: 10 },
+  { label: "ALL METHODS", count: 82, active: true },
+  { label: "E-WALLETS", count: 22 },
+  { label: "PAYMENT SYSTEMS", count: 1 },
+  { label: "INTERNET BANKING", count: 1 },
+  { label: "BANK TRANSFER", count: 3 },
+  { label: "CRYPTOCURRENCY", count: 45 },
+];
 
-type PaymentResult = {
-  paymentId: string;
-  checkoutUrl: string;
-  amount: string;
-  currency: string;
-  reference: string;
-  assignedAccount: string;
-  createdAt: string;
-  raw: ApiEnvelope<CreatePaymentData>;
-};
+const recommendedItems: MethodTile[] = [
+  { label: "Nagad Quick", logo: "nagad" },
+  { label: "Bkash", logo: "bkash" },
+  { label: "Nagad", logo: "nagad" },
+  { label: "Bkash Free", logo: "bkash", badge: "0% COMMISSION" },
+  { label: "Rocket", logo: "rocket" },
+  { label: "Nagad by Paykassma", logo: "nagad" },
+  { label: "Nagad Free", logo: "nagad", badge: "0% COMMISSION" },
+  { label: "Bkash Quick", logo: "bkash" },
+  { label: "Rocket Free", logo: "rocket" },
+  { label: "Neteller" },
+];
 
-type FlowStepStatus = "idle" | "running" | "done" | "error";
+const eWalletItems: MethodTile[] = [
+  { label: "Nagad Quick", logo: "nagad" },
+  { label: "Cellfin Free" },
+  { label: "Bkash", logo: "bkash" },
+  { label: "Nagad", logo: "nagad" },
+  { label: "Bkash Free", logo: "bkash", badge: "0% COMMISSION" },
+  { label: "Rocket", logo: "rocket" },
+  { label: "Nagad by Paykassma", logo: "nagad" },
+  { label: "uPay", badge: "NEW" },
+  { label: "Nagad Free", logo: "nagad", badge: "0% COMMISSION" },
+  { label: "Bkash Quick", logo: "bkash" },
+  { label: "Trust Axiata Pay" },
+  { label: "MoneyGO" },
+  { label: "BinancePay" },
+  { label: "Rocket Free", logo: "rocket" },
+  { label: "WebMoney" },
+  { label: "MiFinity wallet" },
+  { label: "Skrill" },
+  { label: "Skrill 1-Tap", badge: "NEW" },
+  { label: "iPay", badge: "NEW" },
+  { label: "BybitPay" },
+  { label: "Rocket by Paykassma", logo: "rocket", badge: "NEW" },
+  { label: "uPay Kass", badge: "NEW" },
+];
 
-type FlowSteps = {
-  login: FlowStepStatus;
-  create: FlowStepStatus;
-  redirect: FlowStepStatus;
-  status: FlowStepStatus;
-};
+const paymentSystemItems: MethodTile[] = [{ label: "Neteller" }];
+const internetBankingItems: MethodTile[] = [{ label: "Nexus Pay" }];
+const bankTransferItems: MethodTile[] = [
+  { label: "Cellfin" },
+  { label: "OK Wallet" },
+  { label: "Bank Transfer" },
+];
 
-type MerchantCallbackNotice = {
-  status: string;
-  paymentId: string;
-  localPaymentId: string;
-  merchantOrderId: string;
-  merchantReference: string;
-  trxId: string;
-};
+const cryptoNames = [
+  "Solana",
+  "Tether on Tron",
+  "Tether on TON",
+  "Tether on POL",
+  "Tether on BSC",
+  "Tether on Ethereum",
+  "TRON",
+  "Bitcoin",
+  "Litecoin",
+  "Ethereum",
+  "Binance Coin BSC",
+  "Dogecoin",
+  "USD Coin on Ethereum",
+  "XRP",
+  "Polygon",
+  "Toncoin",
+  "Monero",
+  "Dash",
+  "USD Coin on Solana",
+  "Ethereum Classic",
+  "Cardano",
+  "USD Coin on Optimism",
+  "Tether on Optimism",
+  "Ethereum on Optimism",
+  "Bridged USD Coin on Optimism",
+  "SHIBA INU on BSC",
+  "Tether on Arbitrum One",
+  "Ethereum on Arbitrum One",
+  "USD Coin on Arbitrum One",
+  "Bridged USD Coin on Arbitrum",
+  "Algorand",
+  "Bitcoin Cash",
+  "Cosmos Atom",
+  "Tether on Solana",
+  "USD Coin on Base",
+  "Digibyte",
+  "Stellar",
+  "Chainlink on Ethereum",
+  "Ethereum on Base",
+  "SHIBA INU on Ethereum",
+  "Polkadot",
+  "Avalanche C-Chain",
+  "QTUM",
+  "Verge",
+  "ZCash",
+];
 
-type MerchantWalletState = {
-  balance: number;
-  pendingAmounts: Record<string, number>;
-  appliedPayments: Record<string, true>;
-};
+const methodGroups: MethodGroupType[] = [
+  { title: "RECOMMENDED", items: recommendedItems },
+  { title: "E-WALLETS", items: eWalletItems },
+  { title: "PAYMENT SYSTEMS", items: paymentSystemItems },
+  { title: "INTERNET BANKING", items: internetBankingItems },
+  { title: "BANK TRANSFER", items: bankTransferItems },
+  {
+    title: "CRYPTOCURRENCY",
+    items: cryptoNames.map((label) => ({ label, muted: true })),
+    crypto: true,
+  },
+];
 
-class ApiRequestError extends Error {
-  status: number;
+const mainMenuItems = [
+  "Deposit",
+  "Withdraw funds",
+  "Bet history",
+  "Transaction history",
+  "Payment queries",
+];
 
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = "ApiRequestError";
-    this.status = status;
+const profileMenuItems = ["Profile"];
+
+const footerColumns = [
+  {
+    title: "INFORMATION",
+    links: [
+      "About us",
+      "Terms and Conditions",
+      "How to top up your account with crypto",
+      "Affiliate Program",
+      "Become an agent",
+      "TeamCash agents",
+      "Privacy Policy",
+      "Cookie Policy",
+      "Contacts",
+      "We are on social media",
+      "How to place a bet",
+    ],
+  },
+  {
+    title: "BETTING",
+    links: ["Cricket", "Sports", "Multi-LIVE", "Live", "Toto"],
+  },
+  {
+    title: "GAMES",
+    links: ["Casino", "Fast Games", "Live Casino"],
+  },
+  {
+    title: "STATISTICS",
+    links: ["Statistics", "Results"],
+  },
+  {
+    title: "USEFUL LINKS",
+    links: ["Mobile version", "Partnership", "Responsible Gambling"],
+  },
+];
+
+const partners = [
+  "LaLiga",
+  "Juventus",
+  "Icon 1",
+  "Icon 2",
+  "Kings",
+  "Icon 3",
+  "MOT",
+  "Icon 4",
+  "Icon 5",
+  "OG",
+];
+
+const balanceStorageKey = "melbet-demo-balance-bdt";
+const fastPspPresetAmounts = [200, 300, 500, 1000, 5000];
+
+function readStoredBalance() {
+  if (typeof window === "undefined") {
+    return 0;
   }
+
+  const raw = window.localStorage.getItem(balanceStorageKey);
+  const value = raw ? Number(raw) : 0;
+
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+
+  return Number(value.toFixed(2));
 }
 
-const apiBaseFromEnv =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api/v1";
-const demoCurrency = import.meta.env.VITE_CURRENCY || "BDT";
-const demoOrderIdPrefix =
-  import.meta.env.VITE_ORDER_ID_PREFIX || "TEST-ORDER";
-const demoReferencePrefix =
-  import.meta.env.VITE_REFERENCE_PREFIX || "TEST-REF";
-const merchantEmail = import.meta.env.VITE_MERCHANT_EMAIL || "";
-const merchantPassword = import.meta.env.VITE_MERCHANT_PASSWORD || "";
-const merchantWebhookUrl = import.meta.env.VITE_MERCHANT_WEBHOOK_URL || "";
-const customerName = import.meta.env.VITE_CUSTOMER_NAME || "";
-const customerPhone = import.meta.env.VITE_CUSTOMER_PHONE || "";
-const customerEmail = import.meta.env.VITE_CUSTOMER_EMAIL || "";
-const accessTokenStorageKey = "fastpsp-merchant-access-token";
-const walletStateStorageKey = "fastpsp-merchant-wallet-state";
-const defaultWalletState: MerchantWalletState = {
-  balance: 0,
-  pendingAmounts: {},
-  appliedPayments: {},
-};
+function writeStoredBalance(value: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
 
-function randomInt(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  window.localStorage.setItem(balanceStorageKey, value.toFixed(2));
 }
 
-function randomDigits(length: number) {
-  return Array.from({ length }, () => randomInt(0, 9)).join("");
+function formatBalance(value: number) {
+  const rounded = Number(value.toFixed(2));
+  if (Number.isInteger(rounded)) {
+    return String(rounded);
+  }
+  return rounded.toFixed(2);
 }
 
-function createGeneratedPaymentFields() {
-  const now = Date.now();
-  const orderSuffix = `${now}${randomDigits(3)}`;
-  const referenceSuffix = `${now}${randomDigits(2)}`;
-
-  return {
-    merchantOrderId: `${demoOrderIdPrefix}-${orderSuffix}`,
-    merchantReference: `${demoReferencePrefix}-${referenceSuffix}`,
-  };
-}
-
-const defaultForm = {
-  amount: "",
-  trxId: "",
-};
-
-const methods: PaymentMethod[] = [
-  {
-    id: "fast-nagad",
-    label: "Fast Nagad",
-    category: "e-wallets",
-    recommended: true,
-    logo: "/payment-icons/nagad.svg",
-  },
-  {
-    id: "local-nagad",
-    label: "The Local Nagad",
-    category: "e-wallets",
-    logo: "/payment-icons/nagad.svg",
-  },
-  {
-    id: "bkash",
-    label: "Bkash",
-    category: "e-wallets",
-    enabled: true,
-    recommended: true,
-    logo: "/payment-icons/bkash.svg",
-    badge: "API READY",
-  },
-  {
-    id: "upay",
-    label: "Upay",
-    category: "e-wallets",
-    recommended: true,
-    mark: "U",
-  },
-  {
-    id: "bkash-free",
-    label: "Bkash Free",
-    category: "e-wallets",
-    enabled: true,
-    recommended: true,
-    logo: "/payment-icons/bkash.svg",
-    badge: "0% COMMISSION",
-  },
-  {
-    id: "internet-banking",
-    label: "Internet Banking",
-    category: "internet-banking",
-    recommended: true,
-    mark: "NP",
-  },
-  {
-    id: "bank-transfer",
-    label: "Bank Transfer",
-    category: "bank-transfer",
-    recommended: true,
-    mark: "BT",
-  },
-  {
-    id: "citytouch",
-    label: "Citytouch",
-    category: "internet-banking",
-    recommended: true,
-    logo: "/payment-icons/rocket.svg",
-  },
-  {
-    id: "fast-upay",
-    label: "Fast Upay",
-    category: "e-wallets",
-    recommended: true,
-    mark: "U+",
-    badge: "+5%",
-  },
-  {
-    id: "pubali-bank",
-    label: "Pubali Bank",
-    category: "bank-transfer",
-    recommended: true,
-    mark: "PB",
-  },
-  {
-    id: "tether-tron",
-    label: "Tether on Tron",
-    category: "cryptocurrency",
-    recommended: true,
-    mark: "USDT",
-  },
-  {
-    id: "tron",
-    label: "TRON",
-    category: "cryptocurrency",
-    recommended: true,
-    mark: "TRX",
-  },
-  {
-    id: "rocket",
-    label: "Fast Rocket free",
-    category: "e-wallets",
-    logo: "/payment-icons/rocket.svg",
-    badge: "0% COMMISSION",
-  },
-  {
-    id: "moneygo",
-    label: "MoneyGo",
-    category: "e-wallets",
-    mark: "MG",
-  },
-  {
-    id: "binance-pay",
-    label: "BinancePay",
-    category: "e-wallets",
-    mark: "B",
-  },
-  {
-    id: "bitcoin",
-    label: "Bitcoin",
-    category: "cryptocurrency",
-    mark: "BTC",
-  },
-  {
-    id: "ethereum",
-    label: "Ethereum",
-    category: "cryptocurrency",
-    mark: "ETH",
-  },
-  {
-    id: "binance-coin-bsc",
-    label: "Binance Coin BSC",
-    category: "cryptocurrency",
-    mark: "BNB",
-  },
-  {
-    id: "dogecoin",
-    label: "Dogecoin",
-    category: "cryptocurrency",
-    mark: "DOGE",
-  },
-  {
-    id: "xrp",
-    label: "XRP",
-    category: "cryptocurrency",
-    mark: "XRP",
-  },
-  {
-    id: "polygon",
-    label: "Polygon",
-    category: "cryptocurrency",
-    mark: "MATIC",
-  },
-  {
-    id: "toncoin",
-    label: "Toncoin",
-    category: "cryptocurrency",
-    mark: "TON",
-  },
-  {
-    id: "monero",
-    label: "Monero",
-    category: "cryptocurrency",
-    mark: "XMR",
-  },
-  {
-    id: "dash",
-    label: "Dash",
-    category: "cryptocurrency",
-    mark: "DASH",
-  },
-  {
-    id: "solana",
-    label: "Solana",
-    category: "cryptocurrency",
-    mark: "SOL",
-  },
-  {
-    id: "usd-solana",
-    label: "USD Coin on Solana",
-    category: "cryptocurrency",
-    mark: "USDC",
-  },
-  {
-    id: "eth-classic",
-    label: "Ethereum Classic",
-    category: "cryptocurrency",
-    mark: "ETC",
-  },
-  {
-    id: "cardano",
-    label: "Cardano",
-    category: "cryptocurrency",
-    mark: "ADA",
-  },
-  {
-    id: "usd-optimism",
-    label: "USD Coin on Optimism",
-    category: "cryptocurrency",
-    mark: "OP",
-  },
-  {
-    id: "eth-optimism",
-    label: "Ethereum on Optimism",
-    category: "cryptocurrency",
-    mark: "ETH",
-  },
-  {
-    id: "tether-arbitrum",
-    label: "Tether on Arbitrum One",
-    category: "cryptocurrency",
-    mark: "ARB",
-  },
-  {
-    id: "algorand",
-    label: "Algorand",
-    category: "cryptocurrency",
-    mark: "ALGO",
-  },
-  {
-    id: "bitcoin-cash",
-    label: "Bitcoin Cash",
-    category: "cryptocurrency",
-    mark: "BCH",
-  },
-  {
-    id: "stellar",
-    label: "Stellar",
-    category: "cryptocurrency",
-    mark: "XLM",
-  },
-  {
-    id: "polkadot",
-    label: "Polkadot",
-    category: "cryptocurrency",
-    mark: "DOT",
-  },
-  {
-    id: "zcash",
-    label: "ZCash",
-    category: "cryptocurrency",
-    mark: "ZEC",
-  },
-  {
-    id: "usd-ethereum",
-    label: "USD Coin on Ethereum",
-    category: "cryptocurrency",
-    mark: "USDC",
-  },
-];
-
-const sections: Array<{
-  id: MethodCategory;
-  label: string;
-  icon: LucideIcon;
-}> = [
-  { id: "recommended", label: "Recommended", icon: ShieldCheck },
-  { id: "e-wallets", label: "E-Wallets", icon: Wallet },
-  { id: "internet-banking", label: "Internet Banking", icon: CreditCard },
-  { id: "bank-transfer", label: "Bank Transfer", icon: PackageCheck },
-  { id: "cryptocurrency", label: "Cryptocurrency", icon: LockKeyhole },
-];
-
-const currencyFormatter = new Intl.NumberFormat("en-BD", {
-  style: "currency",
-  currency: demoCurrency,
-  maximumFractionDigits: 2,
-});
-
-const initialSteps: FlowSteps = {
-  login: "idle",
-  create: "idle",
-  redirect: "idle",
-  status: "idle",
-};
-
-function normalizeBaseUrl(value: string) {
-  return value.trim().replace(/\/+$/, "");
-}
-
-async function postJson<T>(
-  apiBaseUrl: string,
-  path: string,
-  body: unknown,
-  accessToken?: string,
-): Promise<ApiEnvelope<T>> {
-  const response = await fetch(`${normalizeBaseUrl(apiBaseUrl)}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    body: JSON.stringify(body),
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("en-BD", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
   });
-
-  const text = await response.text();
-  const payload = text ? (JSON.parse(text) as ApiEnvelope<T>) : {};
-
-  if (!response.ok) {
-    throw new ApiRequestError(
-      readApiError(payload, response.statusText),
-      response.status,
-    );
-  }
-
-  return payload;
-}
-
-function readApiError(payload: ApiEnvelope<unknown>, fallback: string) {
-  if (payload.errors?.length) {
-    return payload.errors
-      .map((error) => [error.field, error.message].filter(Boolean).join(": "))
-      .join(", ");
-  }
-
-  return payload.message || fallback || "Request failed.";
-}
-
-function buildPaymentResult(
-  response: ApiEnvelope<CreatePaymentData>,
-): PaymentResult {
-  const data = response.data;
-  const details = data?.data;
-  const checkoutUrl =
-    data?.url ||
-    data?.depositURL ||
-    data?.hostedCheckoutURL ||
-    data?.bkashURL ||
-    details?.depositURL ||
-    details?.hostedCheckoutURL ||
-    details?.bkashURL ||
-    details?.paymentURL ||
-    "";
-  const paymentId =
-    data?.paymentID ||
-    details?.paymentID ||
-    details?.localPaymentId ||
-    details?.clientPaymentId ||
-    "";
-
-  if (!checkoutUrl || !paymentId) {
-    throw new Error("FastPSP did not return a hosted deposit URL and payment ID.");
-  }
-
-  return {
-    paymentId,
-    checkoutUrl,
-    amount: details?.amount || "",
-    currency: details?.currency || demoCurrency,
-    reference: details?.merchantReference || details?.reference || "",
-    assignedAccount: [
-      details?.assignedWalletAccountMode || details?.assignedAccountType,
-      details?.assignedAccountNumber,
-    ]
-      .filter(Boolean)
-      .join(" "),
-    createdAt: details?.paymentCreateTime || "",
-    raw: response,
-  };
-}
-
-function shortToken(value: string) {
-  return value.length > 16 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
-}
-
-function getStoredAccessToken() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  return window.localStorage.getItem(accessTokenStorageKey) || "";
-}
-
-function persistAccessToken(value: string) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  if (value) {
-    window.localStorage.setItem(accessTokenStorageKey, value);
-    return;
-  }
-
-  window.localStorage.removeItem(accessTokenStorageKey);
-}
-
-function readWalletState(): MerchantWalletState {
-  if (typeof window === "undefined") {
-    return defaultWalletState;
-  }
-
-  const raw = window.localStorage.getItem(walletStateStorageKey);
-
-  if (!raw) {
-    return defaultWalletState;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<MerchantWalletState>;
-    return {
-      balance:
-        typeof parsed.balance === "number" && Number.isFinite(parsed.balance)
-          ? parsed.balance
-          : 0,
-      pendingAmounts:
-        parsed.pendingAmounts && typeof parsed.pendingAmounts === "object"
-          ? parsed.pendingAmounts
-          : {},
-      appliedPayments:
-        parsed.appliedPayments && typeof parsed.appliedPayments === "object"
-          ? parsed.appliedPayments
-          : {},
-    };
-  } catch {
-    return defaultWalletState;
-  }
-}
-
-function writeWalletState(nextState: MerchantWalletState) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(walletStateStorageKey, JSON.stringify(nextState));
-}
-
-function rememberPendingDeposit(paymentId: string, amount: string) {
-  const numericAmount = Number(amount);
-
-  if (!paymentId || !Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return;
-  }
-
-  const state = readWalletState();
-  state.pendingAmounts[paymentId] = numericAmount;
-  writeWalletState(state);
-}
-
-function applyDepositSuccess(paymentId: string): MerchantWalletState {
-  const state = readWalletState();
-
-  if (!paymentId || state.appliedPayments[paymentId]) {
-    return state;
-  }
-
-  const amount = state.pendingAmounts[paymentId];
-
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return state;
-  }
-
-  state.balance += amount;
-  state.appliedPayments[paymentId] = true;
-  delete state.pendingAmounts[paymentId];
-  writeWalletState(state);
-
-  return state;
-}
-
-function readMerchantCallbackNotice(): MerchantCallbackNotice | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const { pathname, searchParams } = new URL(window.location.href);
-  const status = (searchParams.get("status") || "").toUpperCase();
-
-  if (!pathname.startsWith("/payment/") || !status) {
-    return null;
-  }
-
-  return {
-    status,
-    paymentId: searchParams.get("payment_id") || "",
-    localPaymentId: searchParams.get("local_payment_id") || "",
-    merchantOrderId: searchParams.get("merchant_order_id") || "",
-    merchantReference: searchParams.get("merchant_reference") || "",
-    trxId: searchParams.get("trx_id") || "",
-  };
 }
 
 function App() {
-  const createPaymentInFlightRef = useRef(false);
-  const [activeCategory, setActiveCategory] = useState<MethodCategory | "all">(
-    "all",
-  );
-  const [selectedMethod, setSelectedMethod] = useState("bkash-free");
-  const [isAmountModalOpen, setIsAmountModalOpen] = useState(false);
-  const [form, setForm] = useState(defaultForm);
-  const [accessToken, setAccessToken] = useState(() => getStoredAccessToken());
-  const [paymentResult, setPaymentResult] = useState<PaymentResult | null>(null);
-  const [lastError, setLastError] = useState("");
-  const [steps, setSteps] = useState<FlowSteps>(initialSteps);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [bkashDirectMessage, setBkashDirectMessage] = useState("");
-  const [walletBalance, setWalletBalance] = useState(() => readWalletState().balance);
-  const [callbackNotice, setCallbackNotice] =
-    useState<MerchantCallbackNotice | null>(() => readMerchantCallbackNotice());
+  const [balance, setBalance] = useState(() => readStoredBalance());
+  const [isRefreshingBalance, setIsRefreshingBalance] = useState(false);
+  const [isFastPspModalOpen, setIsFastPspModalOpen] = useState(false);
+  const [isSubmittingFastPsp, setIsSubmittingFastPsp] = useState(false);
+  const [isTransactionHistoryOpen, setIsTransactionHistoryOpen] = useState(false);
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+  const [transactionHistoryError, setTransactionHistoryError] = useState("");
+  const [transactions, setTransactions] = useState<TransactionHistoryRow[]>([]);
+  const [amount, setAmount] = useState("200.00");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("880");
+  const [modalError, setModalError] = useState("");
 
-  useEffect(() => {
-    const notice = readMerchantCallbackNotice();
-
-    if (!notice) {
+  const refreshBalance = async () => {
+    if (isRefreshingBalance) {
       return;
     }
 
-    setCallbackNotice(notice);
+    setIsRefreshingBalance(true);
 
-    if (notice.status === "SUCCESS") {
-      setSteps({
-        login: "done",
-        create: "done",
-        redirect: "done",
-        status: "done",
-      });
-    }
-  }, []);
-
-  const selectedPaymentMethod = useMemo(
-    () => methods.find((method) => method.id === selectedMethod) || methods[2],
-    [selectedMethod],
-  );
-
-  const visibleSections = useMemo(() => {
-    if (activeCategory === "all") {
-      return sections;
-    }
-
-    return sections.filter((section) => section.id === activeCategory);
-  }, [activeCategory]);
-
-  const categoryCounts = useMemo(() => {
-    const counts = new Map<MethodCategory | "all", number>();
-    counts.set("all", methods.length);
-    counts.set(
-      "recommended",
-      methods.filter((method) => method.recommended).length,
-    );
-
-    for (const section of sections.slice(1)) {
-      counts.set(
-        section.id,
-        methods.filter((method) => method.category === section.id).length,
-      );
-    }
-
-    return counts;
-  }, []);
-
-  const handleFieldChange = (field: keyof typeof form, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }));
-  };
-
-  const handleMethodSelect = (methodId: string) => {
-    setSelectedMethod(methodId);
-    setForm(defaultForm);
-    setPaymentResult(null);
-    setLastError("");
-    setBkashDirectMessage("");
-    setSteps(initialSteps);
-    setIsAmountModalOpen(true);
-  };
-
-  const updateStep = (step: keyof FlowSteps, status: FlowStepStatus) => {
-    setSteps((current) => ({ ...current, [step]: status }));
-  };
-
-  const storeAccessToken = (value: string) => {
-    setAccessToken(value);
-    persistAccessToken(value);
-  };
-
-  const loginMerchant = async () => {
-    const authResponse = await postJson<AuthData>(apiBaseFromEnv, "/merchant/login", {
-      email: merchantEmail.trim(),
-      password: merchantPassword,
+    await new Promise<void>((resolve) => {
+      window.setTimeout(() => resolve(), 380);
     });
-    const token = authResponse.data?.accessToken;
 
-    if (!token) {
-      throw new Error("Merchant login did not return an access token.");
-    }
+    const currentBalance = readStoredBalance();
+    const nextBalance =
+      currentBalance <= 0
+        ? Number((Math.random() * 1200 + 50).toFixed(2))
+        : Number(Math.max(0, currentBalance + (Math.random() * 90 - 45)).toFixed(2));
 
-    storeAccessToken(token);
-    return token;
+    writeStoredBalance(nextBalance);
+    setBalance(nextBalance);
+    setIsRefreshingBalance(false);
   };
 
-  const createPaymentRequest = async (amount: number) => {
-    const generatedPaymentFields = createGeneratedPaymentFields();
-    let token = accessToken || getStoredAccessToken();
-
-    if (token) {
-      updateStep("login", "done");
-    } else {
-      token = await loginMerchant();
-      updateStep("login", "done");
-    }
-
-    const payerReference =
-      customerPhone.trim() ||
-      customerEmail.trim() ||
-      customerName.trim() ||
-      generatedPaymentFields.merchantReference;
-
-    const paymentBody = {
-      merchant_order_id: generatedPaymentFields.merchantOrderId,
-      merchant_reference: generatedPaymentFields.merchantReference,
-      amount: amount.toFixed(2),
-      currency: demoCurrency,
-      payerReference,
-      customer_name: customerName.trim() || undefined,
-      customer_phone: customerPhone.trim() || undefined,
-      customer_email: customerEmail.trim() || undefined,
-      success_url: `${window.location.origin}/payment/success`,
-      failure_url: `${window.location.origin}/payment/failure`,
-      cancel_url: `${window.location.origin}/payment/cancel`,
-      webhook_url: merchantWebhookUrl.trim() || undefined,
-    };
-
-    updateStep("create", "running");
-
-    let paymentResponse: ApiEnvelope<CreatePaymentData>;
-
-    try {
-      paymentResponse = await postJson<CreatePaymentData>(
-        apiBaseFromEnv,
-        "/create-payment",
-        paymentBody,
-        token,
-      );
-    } catch (error) {
-      if (
-        error instanceof ApiRequestError &&
-        (error.status === 401 || error.status === 403)
-      ) {
-        storeAccessToken("");
-        updateStep("login", "running");
-        token = await loginMerchant();
-        updateStep("login", "done");
-        paymentResponse = await postJson<CreatePaymentData>(
-          apiBaseFromEnv,
-          "/create-payment",
-          paymentBody,
-          token,
-        );
-      } else {
-        throw error;
-      }
-    }
-
-    const nextPaymentResult = buildPaymentResult(paymentResponse);
-    rememberPendingDeposit(nextPaymentResult.paymentId, nextPaymentResult.amount);
-    setPaymentResult(nextPaymentResult);
-    updateStep("create", "done");
-
-    return nextPaymentResult;
+  const openFastPspModal = () => {
+    setAmount("200.00");
+    setModalError("");
+    setIsFastPspModalOpen(true);
   };
 
-  const createBkashPayment = async () => {
-    if (createPaymentInFlightRef.current) {
+  const closeFastPspModal = () => {
+    if (isSubmittingFastPsp) {
+      return;
+    }
+    setIsFastPspModalOpen(false);
+  };
+
+  const setPresetAmount = (nextAmount: number) => {
+    setAmount(nextAmount.toFixed(2));
+    setModalError("");
+  };
+
+  const confirmFastPspPayment = async () => {
+    if (isSubmittingFastPsp) {
       return;
     }
 
-    createPaymentInFlightRef.current = true;
-    setLastError("");
-    setBkashDirectMessage("");
-    setPaymentResult(null);
-    setSteps({ ...initialSteps, login: "running" });
-
-    const amount = Number(form.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setLastError("Enter a valid deposit amount.");
-      setSteps({ ...initialSteps, login: "error" });
+    const numericAmount = Number(amount.replaceAll(" ", ""));
+    if (!Number.isFinite(numericAmount) || numericAmount < 200 || numericAmount > 25000) {
+      setModalError("Amount must be between 200.00 and 25,000.00 BDT.");
       return;
     }
 
-    if (selectedMethod === "bkash" && form.trxId.trim().length < 6) {
-      setLastError("Enter a valid transaction ID.");
-      setSteps({ ...initialSteps, login: "error" });
-      createPaymentInFlightRef.current = false;
-      return;
-    }
+    setModalError("");
+    setIsSubmittingFastPsp(true);
 
-    if (!merchantEmail.trim() || !merchantPassword) {
-      setLastError("Merchant email and password are required.");
-      setSteps({ ...initialSteps, login: "error" });
-      return;
-    }
-
-    if (!customerName.trim() && !customerPhone.trim() && !customerEmail.trim()) {
-      setLastError("Add at least one customer identifier.");
-      setSteps({ ...initialSteps, login: "error" });
-      return;
-    }
-
-    setIsSubmitting(true);
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 9000 + 1000);
+    const merchantOrderId = `ORDER-${timestamp}-${random}`;
+    const merchantReference = `REF-${timestamp}-${random}`;
 
     try {
-      const nextPaymentResult = await createPaymentRequest(amount);
+      const response = await fetch("/api/fastpsp/create-payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          merchant_order_id: merchantOrderId,
+          merchant_reference: merchantReference,
+          amount: numericAmount.toFixed(2),
+          currency: "BDT",
+          payerReference: phoneNumber.trim() || email.trim() || merchantReference,
+          customer_name: fullName.trim(),
+          customer_phone: phoneNumber.trim(),
+          customer_email: email.trim(),
+          success_url: `${window.location.origin}/payment/success`,
+          failure_url: `${window.location.origin}/payment/failure`,
+          cancel_url: `${window.location.origin}/payment/cancel`,
+        }),
+      });
 
-      if (selectedMethod === "bkash-free") {
-        updateStep("redirect", "done");
-        setIsAmountModalOpen(false);
-        window.location.assign(nextPaymentResult.checkoutUrl);
-        return;
+      const payload = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        checkoutUrl?: string;
+      };
+
+      if (!response.ok || !payload.success || !payload.checkoutUrl) {
+        throw new Error(payload.message || "Failed to create FastPSP payment.");
       }
 
-      const verifyResponse = await postJson<Record<string, unknown>>(
-        apiBaseFromEnv,
-        `/deposit/${encodeURIComponent(nextPaymentResult.paymentId)}/verify`,
-        { trx_id: form.trxId.trim() },
-      );
-      const verifyData = verifyResponse.data || {};
-      const verifyStatus =
-        typeof verifyData.status === "string"
-          ? verifyData.status.toUpperCase()
-          : "PENDING";
-      const verifyMessage =
-        typeof verifyData.message === "string"
-          ? verifyData.message
-          : "Transaction submitted successfully.";
-
-      setBkashDirectMessage(verifyMessage);
-      updateStep("status", "done");
-      updateStep("redirect", "done");
-
-      if (verifyStatus === "SUCCESS") {
-        const nextState = applyDepositSuccess(nextPaymentResult.paymentId);
-        setWalletBalance(nextState.balance);
-      }
-
-      setIsAmountModalOpen(false);
-      window.location.replace(window.location.origin);
+      window.location.assign(payload.checkoutUrl);
       return;
     } catch (error) {
-      setLastError(error instanceof Error ? error.message : "Payment failed.");
-      setSteps((current) => ({
-        ...current,
-        login: current.login === "running" ? "error" : current.login,
-        create: current.create === "running" ? "error" : current.create,
-        redirect: current.redirect === "running" ? "error" : current.redirect,
-      }));
+      setModalError(
+        error instanceof Error ? error.message : "Unable to create payment link.",
+      );
     } finally {
-      createPaymentInFlightRef.current = false;
-      setIsSubmitting(false);
+      setIsSubmittingFastPsp(false);
     }
   };
 
-  const dismissCallbackNotice = () => {
-    if (callbackNotice?.status === "SUCCESS" && callbackNotice.paymentId) {
-      const nextState = applyDepositSuccess(callbackNotice.paymentId);
-      setWalletBalance(nextState.balance);
-    }
+  const fetchTransactions = async () => {
+    setIsLoadingTransactions(true);
+    setTransactionHistoryError("");
+    try {
+      const response = await fetch("/api/fastpsp/transactions?limit=100");
+      const payload = (await response.json()) as {
+        success?: boolean;
+        transactions?: TransactionHistoryRow[];
+        message?: string;
+      };
 
-    setCallbackNotice(null);
-    window.location.replace(window.location.origin);
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || "Failed to load transaction history.");
+      }
+
+      setTransactions(Array.isArray(payload.transactions) ? payload.transactions : []);
+    } catch (error) {
+      setTransactionHistoryError(
+        error instanceof Error ? error.message : "Unable to load transaction history.",
+      );
+    } finally {
+      setIsLoadingTransactions(false);
+    }
+  };
+
+  const openTransactionHistory = () => {
+    setIsTransactionHistoryOpen(true);
+    void fetchTransactions();
+  };
+
+  const closeTransactionHistory = () => {
+    if (isLoadingTransactions) {
+      return;
+    }
+    setIsTransactionHistoryOpen(false);
   };
 
   return (
-    <div className="app-shell">
-      <TopBar walletBalance={walletBalance} />
-      <SubTopBar />
+    <div className="melbet-page">
+      <header className="top-header">
+        <div className="logo-wrap">
+          <span className="logo-text">
+            <span className="logo-mel">MEL</span>
+            <span className="logo-bet">BET</span>
+          </span>
+          <span className="bd-flag" aria-hidden="true">
+            <span />
+          </span>
+        </div>
 
-      <div className="layout-shell">
+        <div className="header-shortcuts">
+          <span className="shortcut-item" />
+          <span className="shortcut-item" />
+          <span className="shortcut-item" />
+          <span className="shortcut-item" />
+          <span className="shortcut-item" />
+          <span className="shortcut-item" />
+        </div>
+
+        <div className="header-tools">
+          <div className="header-balance">
+            <span className="header-balance-currency">BDT</span>
+            <strong className="header-balance-amount">{formatBalance(balance)}</strong>
+          </div>
+          <button
+            type="button"
+            className={`header-balance-refresh ${
+              isRefreshingBalance ? "header-balance-refresh--spinning" : ""
+            }`}
+            aria-label="Refresh balance"
+            title="Refresh balance"
+            onClick={refreshBalance}
+            disabled={isRefreshingBalance}
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+
+      <nav className="primary-nav">
+        <a href="/" className="mayan-link">
+          Mayan Tomb
+        </a>
+      </nav>
+
+      <div className="layout">
         <aside className="left-sidebar">
-          <section className="left-card account-card">
-            <div className="account-head">
-              <strong>№1657605995</strong>
-              <span>1/5</span>
-            </div>
-            <p>Add email</p>
-            <div className="wallet-summary">
-              <span>Bonus points</span>
-              <strong>0</strong>
-            </div>
-            <div className="wallet-summary">
-              <span>Main account ({demoCurrency})</span>
-              <strong>{walletBalance.toFixed(2)}</strong>
-            </div>
+          <section className="menu-group">
+            <div className="menu-title">ACCOUNT</div>
+            <nav className="account-menu">
+              {mainMenuItems.map((item, index) => (
+                <button
+                  type="button"
+                  className={`menu-item ${index === 0 ? "menu-item--active" : ""}`}
+                  key={item}
+                  onClick={item === "Transaction history" ? openTransactionHistory : undefined}
+                >
+                  <span className="menu-dot" />
+                  {item}
+                </button>
+              ))}
+            </nav>
           </section>
-          <nav className="left-card left-nav">
-            <h3>MY WALLET AND BETS</h3>
-            <button type="button" className="left-nav-item active">
-              <WalletCards size={18} /> Deposit
-            </button>
-            <button type="button" className="left-nav-item">
-              <ScrollText size={18} /> Withdraw funds
-            </button>
-            <button type="button" className="left-nav-item">
-              <History size={18} /> Bet history
-            </button>
-            <button type="button" className="left-nav-item">
-              <Clock3 size={18} /> Transaction history
-            </button>
-          </nav>
+
+          <section className="menu-group">
+            <div className="menu-title">PROFILE</div>
+            <nav className="account-menu">
+              {profileMenuItems.map((item) => (
+                <button type="button" className="menu-item" key={item}>
+                  <span className="menu-dot" />
+                  {item}
+                </button>
+              ))}
+            </nav>
+          </section>
         </aside>
 
-        <main className="deposit-frame">
-          <section className="notice-band">
-            <div>
-              <p className="eyebrow">ACCOUNT 1657605995</p>
-              <h1>Select payment method to top up your account</h1>
+        <section className="deposit-content">
+          <div className="deposit-panel">
+            <div className="panel-header">
+              <h1>ACCOUNT 1668665073</h1>
+              <p>Select payment method to top up your account:</p>
             </div>
-            <div className="notice-meta">
-              <span>{demoCurrency} wallet</span>
-              <strong>
-                {demoCurrency} {walletBalance.toFixed(2)}
-              </strong>
+
+            <div className="promo-banner">
+              <span>MELBET DEPOSIT BONUS</span>
+              <button type="button">START NOW</button>
             </div>
-          </section>
 
-          {callbackNotice ? (
-            <MerchantCallbackToast
-              notice={callbackNotice}
-              onDismiss={dismissCallbackNotice}
-            />
-          ) : null}
+            <div className="payment-layout">
+              <aside className="methods-filter">
+                {categoryItems.map((item) => (
+                  <button
+                    type="button"
+                    key={item.label}
+                    className={`filter-item ${item.active ? "filter-item--active" : ""}`}
+                  >
+                    <span>{item.label}</span>
+                    <strong>{item.count}</strong>
+                  </button>
+                ))}
+              </aside>
 
-          <div className="deposit-layout">
-            <aside className="method-menu" aria-label="Payment method categories">
-              <CategoryButton
-                active={activeCategory === "all"}
-                count={categoryCounts.get("all") || 0}
-                icon={Search}
-                label="All Methods"
-                onClick={() => setActiveCategory("all")}
-              />
-              {sections.map((section) => (
-                <CategoryButton
-                  key={section.id}
-                  active={activeCategory === section.id}
-                  count={categoryCounts.get(section.id) || 0}
-                  icon={section.icon}
-                  label={section.label}
-                  onClick={() => setActiveCategory(section.id)}
-                />
-              ))}
-            </aside>
-
-            <section className="methods-stack" aria-label="Deposit methods">
-              {visibleSections.map((section) => (
-                <MethodSection
-                  key={section.id}
-                  section={section}
-                  methods={
-                    section.id === "recommended"
-                      ? methods.filter((method) => method.recommended)
-                      : methods.filter((method) => method.category === section.id)
-                  }
-                  selectedMethod={selectedMethod}
-                  onSelect={handleMethodSelect}
-                />
-              ))}
-            </section>
+              <div className="methods-groups">
+                {methodGroups.map((group) => (
+                  <section className="method-group" key={group.title}>
+                    <h2>{group.title}</h2>
+                    <div
+                      className={`method-grid ${
+                        group.crypto ? "method-grid--crypto" : ""
+                      }`}
+                    >
+                      {group.items.map((item) => (
+                        <MethodCard
+                          item={item}
+                          groupTitle={group.title}
+                          onOpenFastPspModal={openFastPspModal}
+                          key={`${group.title}-${item.label}`}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </div>
           </div>
-        </main>
+        </section>
       </div>
 
-      {isAmountModalOpen ? (
-        <div
-          className="modal-backdrop"
-          onClick={() => setIsAmountModalOpen(false)}
-          role="presentation"
-        >
-          <div
-            aria-labelledby="amount-modal-title"
-            aria-modal="true"
-            className="amount-modal"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <div className="amount-modal-header">
-              <div className="amount-modal-method">
-                <div className="amount-modal-logo">
-                  {selectedPaymentMethod.logo ? (
-                    <img alt="" src={selectedPaymentMethod.logo} />
-                  ) : (
-                    <span>{selectedPaymentMethod.mark || selectedPaymentMethod.label.slice(0, 2)}</span>
-                  )}
-                </div>
-                <div>
-                  <p className="eyebrow">Create Deposit</p>
-                  <h2 id="amount-modal-title">{selectedPaymentMethod.label}</h2>
-                </div>
+      <footer className="site-footer">
+        <div className="footer-accordion">ONLINE BETTING SITE - MELBET</div>
+        <div className="footer-accordion">POPULAR EVENTS AND SPORTS NEWS</div>
+
+        <div className="footer-columns">
+          {footerColumns.map((column) => (
+            <div key={column.title} className="footer-column">
+              <h3>{column.title}</h3>
+              <ul>
+                {column.links.map((link) => (
+                  <li key={link}>{link}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+          <div className="footer-column footer-column--apps">
+            <h3>APPS</h3>
+            <div className="app-buttons">
+              <span>Android</span>
+              <span>iOS</span>
+            </div>
+            <div className="app-card">
+              <div className="qr">QR</div>
+              <div>
+                <strong>MOBILE APPLICATION</strong>
+                <p>Download</p>
               </div>
-              <button
-                className="modal-close"
-                onClick={() => setIsAmountModalOpen(false)}
-                title="Close"
-                type="button"
-              >
-                <XCircle size={20} />
-              </button>
-            </div>
-
-            <p className="amount-modal-copy">
-              {selectedMethod === "bkash"
-                ? "Enter amount and transaction ID. We will submit to FastPSP and verify status."
-                : "Enter the deposit amount and submit to create the hosted checkout page for this payment method."}
-            </p>
-
-            <div className="form-grid">
-              <label htmlFor="amount-input">
-                <div className="amount-label-header">
-                  <span>Amount ({demoCurrency})</span>
-                </div>
-                <input
-                  id="amount-input"
-                  autoFocus
-                  inputMode="decimal"
-                  placeholder={`Enter amount`}
-                  value={form.amount}
-                  onChange={(event) =>
-                    handleFieldChange("amount", event.target.value)
-                  }
-                />
-              </label>
-              {selectedMethod === "bkash" ? (
-                <label htmlFor="trx-id-input">
-                  <div className="amount-label-header">
-                    <span>Transaction ID</span>
-                  </div>
-                  <input
-                    id="trx-id-input"
-                    placeholder="Enter trxID"
-                    value={form.trxId}
-                    onChange={(event) =>
-                      handleFieldChange("trxId", event.target.value)
-                    }
-                  />
-                </label>
-              ) : null}
-            </div>
-
-            {lastError ? <div className="error-box">{lastError}</div> : null}
-            {bkashDirectMessage ? (
-              <div className="sequence-note">{bkashDirectMessage}</div>
-            ) : null}
-
-            <div className="modal-actions">
-              <button
-                className="secondary-action"
-                onClick={() => setIsAmountModalOpen(false)}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="primary-action"
-                disabled={!selectedPaymentMethod.enabled || isSubmitting}
-                onClick={createBkashPayment}
-                type="button"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="spin" size={18} />
-                ) : (
-                  <CreditCard size={18} />
-                )}
-                Enter
-              </button>
             </div>
           </div>
+        </div>
+
+        <div className="partners-strip">
+          {partners.map((partner) => (
+            <div className="partner-tile" key={partner}>
+              {partner}
+            </div>
+          ))}
+        </div>
+
+        <div className="footer-bottom">
+          <p>
+            Melbet uses cookies to ensure the best user experience. By remaining on
+            the website, you consent to the use of cookies.
+          </p>
+          <div className="bottom-badges">
+            <span>18+</span>
+            <span>BeGambleAware.org</span>
+            <span>DMCA Protected</span>
+          </div>
+          <div className="support-row">
+            <span className="support-chip">CUSTOMER SUPPORT 442038077601</span>
+            <span className="support-chip">MOBILE VERSION</span>
+          </div>
+        </div>
+      </footer>
+
+      {isTransactionHistoryOpen ? (
+        <div className="history-modal-backdrop" role="presentation" onClick={closeTransactionHistory}>
+          <section
+            className="history-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Transaction history"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="history-modal-header">
+              <h3>Transaction History</h3>
+              <button
+                type="button"
+                className="history-modal-close"
+                onClick={closeTransactionHistory}
+                disabled={isLoadingTransactions}
+                aria-label="Close transaction history"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="history-modal-body">
+              {transactionHistoryError ? (
+                <div className="history-error">{transactionHistoryError}</div>
+              ) : null}
+
+              {isLoadingTransactions ? <div className="history-loading">Loading...</div> : null}
+
+              {!isLoadingTransactions && transactions.length === 0 ? (
+                <div className="history-empty">No transactions found yet.</div>
+              ) : null}
+
+              {!isLoadingTransactions && transactions.length > 0 ? (
+                <div className="history-table-wrap">
+                  <table className="history-table">
+                    <thead>
+                      <tr>
+                        <th>Order ID</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transactions.map((row) => (
+                        <tr key={row.merchant_order_id}>
+                          <td>{row.merchant_order_id}</td>
+                          <td>
+                            {row.currency || "BDT"} {row.amount ?? "-"}
+                          </td>
+                          <td>
+                            {row.webhook_status || row.fastpsp_status || (row.error_message ? "FAILED" : "PENDING")}
+                          </td>
+                          <td>{formatDateTime(row.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isFastPspModalOpen ? (
+        <div className="fastpsp-modal-backdrop" role="presentation" onClick={closeFastPspModal}>
+          <section
+            className="fastpsp-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="fastPSP Bkash payment form"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="fastpsp-modal-header">
+              <div className="fastpsp-logo">
+                <img src="/payment-icons/bkash.svg" alt="Bkash" />
+                <span>fastPSP</span>
+              </div>
+              <button
+                type="button"
+                className="fastpsp-modal-close"
+                onClick={closeFastPspModal}
+                disabled={isSubmittingFastPsp}
+                aria-label="Close modal"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="fastpsp-modal-body">
+              <div className="fastpsp-field-row">
+                <label htmlFor="fastpsp-amount" className="fastpsp-field-label">
+                  Amount (Min 200.00 BDT / Max 25 000.00 BDT):
+                </label>
+                <input
+                  id="fastpsp-amount"
+                  className="fastpsp-input"
+                  type="text"
+                  value={amount}
+                  onChange={(event) => {
+                    setAmount(event.target.value);
+                    setModalError("");
+                  }}
+                  inputMode="decimal"
+                  placeholder="200.00"
+                />
+              </div>
+
+              {modalError ? <div className="fastpsp-error">{modalError}</div> : null}
+
+              <div className="fastpsp-presets-title">
+                Please enter or select your deposit amount
+              </div>
+              <div className="fastpsp-presets">
+                {fastPspPresetAmounts.map((preset) => (
+                  <button
+                    type="button"
+                    key={preset}
+                    className="fastpsp-preset-btn"
+                    onClick={() => setPresetAmount(preset)}
+                    disabled={isSubmittingFastPsp}
+                  >
+                    {preset.toLocaleString("en-US")}
+                  </button>
+                ))}
+              </div>
+
+              <div className="fastpsp-field-row">
+                <label htmlFor="fastpsp-fullname" className="fastpsp-field-label">
+                  First name and surname:
+                </label>
+                <input
+                  id="fastpsp-fullname"
+                  className="fastpsp-input"
+                  type="text"
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                />
+              </div>
+
+              <div className="fastpsp-field-row">
+                <label htmlFor="fastpsp-email" className="fastpsp-field-label">
+                  Email:
+                </label>
+                <input
+                  id="fastpsp-email"
+                  className="fastpsp-input"
+                  type="text"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </div>
+
+              <div className="fastpsp-field-row">
+                <label htmlFor="fastpsp-phone" className="fastpsp-field-label">
+                  Phone number:
+                </label>
+                <input
+                  id="fastpsp-phone"
+                  className="fastpsp-input"
+                  type="text"
+                  value={phoneNumber}
+                  onChange={(event) => setPhoneNumber(event.target.value)}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="fastpsp-confirm-btn"
+                onClick={confirmFastPspPayment}
+                disabled={isSubmittingFastPsp}
+              >
+                {isSubmittingFastPsp ? "PROCESSING..." : "CONFIRM"}
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
     </div>
   );
 }
 
-function TopBar({ walletBalance }: { walletBalance: number }) {
-  return (
-    <header className="top-bar">
-      <div className="brand-lockup">
-        <div className="brand-mark">3N3</div>
-        <strong>3N3</strong>
-      </div>
-      <div className="top-actions">
-        <button className="small-icon" title="Rewards" type="button">
-          <Gift size={18} />
-        </button>
-        <button className="small-icon" title="Account" type="button">
-          <User size={18} />
-        </button>
-        <button className="small-icon" title="Notifications" type="button">
-          <Bell size={18} />
-        </button>
-        <button className="balance-chip" type="button">
-          <span>BDT</span>
-          <strong>{walletBalance.toFixed(2)}</strong>
-        </button>
-        <button className="deposit-button" type="button">
-          Make a Deposit
-        </button>
-        <button className="small-icon" title="Language" type="button">
-          <Languages size={18} />
-        </button>
-        <button className="small-icon" title="Settings" type="button">
-          <Settings size={18} />
-        </button>
-        <button className="small-icon" title="Messages" type="button">
-          <Mail size={18} />
-        </button>
-      </div>
-    </header>
-  );
-}
-
-function SubTopBar() {
-  return (
-    <nav className="sub-top-bar" aria-label="Secondary navigation">
-      <a>
-        <Trophy size={16} /> Top events <ChevronDown size={14} />
-      </a>
-      <a>League of wins</a>
-      <a>IPL 2026</a>
-      <a>Cricket</a>
-      <a>
-        Sports <ChevronDown size={14} />
-      </a>
-      <a>
-        Live <ChevronDown size={14} />
-      </a>
-      <a>1XGames</a>
-      <a>
-        Casino <ChevronDown size={14} />
-      </a>
-      <a>
-        More <ChevronDown size={14} />
-      </a>
-    </nav>
-  );
-}
-
-function MerchantCallbackToast({
-  notice,
-  onDismiss,
+function MethodCard({
+  item,
+  groupTitle,
+  onOpenFastPspModal,
 }: {
-  notice: MerchantCallbackNotice;
-  onDismiss: () => void;
+  item: MethodTile;
+  groupTitle: string;
+  onOpenFastPspModal: () => void;
 }) {
-  const isSuccess = notice.status === "SUCCESS";
+  const showGatewayLabel = groupTitle === "RECOMMENDED" && item.label === "Bkash";
 
   return (
-    <div className="callback-modal-backdrop" role="presentation">
-      <section
-        aria-modal="true"
-        className={`callback-modal ${isSuccess ? "success" : "warning"}`}
-        role="dialog"
-      >
-        <div className="callback-icon">
-          {isSuccess ? <CheckCircle2 size={30} /> : <Clock3 size={30} />}
-        </div>
-        <div className="callback-content">
-          <h2>
-            {isSuccess ? "Deposit Success!" : `Payment ${notice.status}`}
-          </h2>
-        </div>
-        <button
-          className="primary-action callback-action"
-          onClick={onDismiss}
-          type="button"
-        >
-          Dismiss
-        </button>
-      </section>
-    </div>
-  );
-}
-
-function CategoryButton({
-  active,
-  count,
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  count: number;
-  icon: LucideIcon;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`category-button ${active ? "active" : ""}`}
-      onClick={onClick}
-      type="button"
+    <article
+      className={`method-card ${item.muted ? "method-card--muted" : ""} ${
+        showGatewayLabel ? "method-card--interactive" : ""
+      }`}
+      onClick={showGatewayLabel ? onOpenFastPspModal : undefined}
+      role={showGatewayLabel ? "button" : undefined}
+      tabIndex={showGatewayLabel ? 0 : undefined}
+      onKeyDown={
+        showGatewayLabel
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenFastPspModal();
+              }
+            }
+          : undefined
+      }
     >
-      <Icon size={16} />
-      <span>{label}</span>
-      <strong>{count}</strong>
-    </button>
+      {item.badge ? <span className="method-badge">{item.badge}</span> : null}
+      <div className={`method-top ${item.logo ? `logo-${item.logo}` : ""}`}>
+        {item.logo ? (
+          <div
+            className={`logo-with-gateway ${
+              showGatewayLabel ? "logo-with-gateway--bkash" : ""
+            }`}
+          >
+            <img src={logoPath(item.logo)} alt={item.label} />
+            {showGatewayLabel ? (
+              <span className="gateway-label">fastPSP</span>
+            ) : null}
+          </div>
+        ) : (
+          <span>{item.label}</span>
+        )}
+      </div>
+      <div className="method-bottom">{item.label}</div>
+    </article>
   );
 }
 
-function MethodSection({
-  methods: sectionMethods,
-  onSelect,
-  section,
-  selectedMethod,
-}: {
-  methods: PaymentMethod[];
-  onSelect: (id: string) => void;
-  section: { id: MethodCategory; label: string };
-  selectedMethod: string;
-}) {
-  return (
-    <div className="method-section">
-      <div className="section-title">{section.label}</div>
-      <div className="method-grid">
-        {sectionMethods.map((method) => (
-          <button
-            key={`${section.id}-${method.id}`}
-            className={`method-card ${
-              selectedMethod === method.id ? "selected" : ""
-            } ${method.enabled ? "enabled" : ""}`}
-            disabled={!method.enabled}
-            onClick={() => onSelect(method.id)}
-            type="button"
-          >
-            {method.badge ? <span className="badge">{method.badge}</span> : null}
-            <div className="method-logo">
-              {method.logo ? (
-                <img alt="" src={method.logo} />
-              ) : (
-                <span>{method.mark || method.label.slice(0, 2)}</span>
-              )}
-            </div>
-            <div className="method-name">{method.label}</div>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+function logoPath(logo: NonNullable<MethodTile["logo"]>) {
+  if (logo === "bkash") {
+    return "/payment-icons/bkash.svg";
+  }
+  if (logo === "nagad") {
+    return "/payment-icons/nagad.svg";
+  }
+  return "/payment-icons/rocket.svg";
 }
 
 export default App;
