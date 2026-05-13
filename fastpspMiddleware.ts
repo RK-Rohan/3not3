@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import type { Plugin } from "vite";
 
 type JsonObject = Record<string, unknown>;
+type EnvMap = Record<string, string | undefined>;
 
 type PersistedTransaction = {
   merchantOrderId: string;
@@ -29,6 +30,21 @@ type PersistedTransaction = {
 
 let dbPool: Pool | null = null;
 let schemaEnsured = false;
+let runtimeEnv: EnvMap = process.env as EnvMap;
+
+function readEnv(name: string) {
+  const fromRuntime = runtimeEnv[name];
+  if (typeof fromRuntime === "string" && fromRuntime.trim()) {
+    return fromRuntime.trim();
+  }
+
+  const fromProcess = process.env[name];
+  if (typeof fromProcess === "string" && fromProcess.trim()) {
+    return fromProcess.trim();
+  }
+
+  return "";
+}
 
 function sendJson(res: ServerResponse, statusCode: number, payload: unknown) {
   res.statusCode = statusCode;
@@ -87,8 +103,8 @@ function toNullableNumber(value: unknown) {
   return null;
 }
 
-function defaultCallbackUrl(origin: string, state: "success" | "failure" | "cancel") {
-  return `${origin}/payment/${state}`;
+function defaultCallbackUrl(origin: string) {
+  return origin;
 }
 
 function createIds() {
@@ -121,15 +137,6 @@ function buildFastPspPayload(clientBody: JsonObject, origin: string) {
       ? clientBody.merchant_reference.trim()
       : generated.reference;
 
-  const customerPhone =
-    typeof clientBody.customer_phone === "string" ? clientBody.customer_phone.trim() : "";
-  const customerEmail =
-    typeof clientBody.customer_email === "string" ? clientBody.customer_email.trim() : "";
-  const payerReference =
-    typeof clientBody.payerReference === "string" && clientBody.payerReference.trim()
-      ? clientBody.payerReference.trim()
-      : customerPhone || customerEmail || merchantReference;
-
   return {
     merchant_order_id:
       typeof clientBody.merchant_order_id === "string" &&
@@ -138,31 +145,10 @@ function buildFastPspPayload(clientBody: JsonObject, origin: string) {
         : generated.orderId,
     merchant_reference: merchantReference,
     amount: normalizeAmount(clientBody.amount),
-    currency:
-      typeof clientBody.currency === "string" && clientBody.currency.trim()
-        ? clientBody.currency.trim()
-        : "BDT",
-    payerReference,
-    customer_name:
-      typeof clientBody.customer_name === "string" ? clientBody.customer_name.trim() : "",
-    customer_phone: customerPhone,
-    customer_email: customerEmail,
-    success_url:
-      typeof clientBody.success_url === "string" && clientBody.success_url.trim()
-        ? clientBody.success_url.trim()
-        : defaultCallbackUrl(origin, "success"),
-    failure_url:
-      typeof clientBody.failure_url === "string" && clientBody.failure_url.trim()
-        ? clientBody.failure_url.trim()
-        : defaultCallbackUrl(origin, "failure"),
-    cancel_url:
-      typeof clientBody.cancel_url === "string" && clientBody.cancel_url.trim()
-        ? clientBody.cancel_url.trim()
-        : defaultCallbackUrl(origin, "cancel"),
-    webhook_url:
-      typeof clientBody.webhook_url === "string" && clientBody.webhook_url.trim()
-        ? clientBody.webhook_url.trim()
-        : process.env.FASTPSP_WEBHOOK_URL || "",
+    callback_url:
+      typeof clientBody.callback_url === "string" && clientBody.callback_url.trim()
+        ? clientBody.callback_url.trim()
+        : defaultCallbackUrl(origin),
   };
 }
 
@@ -224,7 +210,7 @@ function normalizeBaseUrl(value: string) {
 }
 
 function verifyWebhookSignature(rawBody: string, timestamp: string, signature: string) {
-  const secret = process.env.FASTPSP_API_SECRET || "";
+  const secret = readEnv("FASTPSP_API_SECRET");
   if (!secret || !timestamp || !signature) {
     return false;
   }
@@ -242,7 +228,7 @@ function verifyWebhookSignature(rawBody: string, timestamp: string, signature: s
 }
 
 function getDbPool() {
-  const connectionString = process.env.DATABASE_URL?.trim() || "";
+  const connectionString = readEnv("DATABASE_URL");
   if (!connectionString) {
     return null;
   }
@@ -251,7 +237,7 @@ function getDbPool() {
     return dbPool;
   }
 
-  const forceDisableSsl = process.env.DATABASE_SSL === "false";
+  const forceDisableSsl = readEnv("DATABASE_SSL").toLowerCase() === "false";
   const shouldUseSsl =
     !forceDisableSsl && !/localhost|127\.0\.0\.1/i.test(connectionString);
 
@@ -445,10 +431,10 @@ async function persistWebhook(payload: JsonObject) {
 }
 
 async function handleCreatePayment(req: IncomingMessage, res: ServerResponse) {
-  const apiKey = process.env.FASTPSP_API_KEY || "";
-  const apiSecret = process.env.FASTPSP_API_SECRET || "";
+  const apiKey = readEnv("FASTPSP_API_KEY");
+  const apiSecret = readEnv("FASTPSP_API_SECRET");
   const baseUrl = normalizeBaseUrl(
-    process.env.FASTPSP_BASE_URL || "https://api.fastpsp.com/api/v1",
+    readEnv("FASTPSP_BASE_URL") || "https://api.fastpsp.com/api/v1",
   );
 
   if (!apiKey || !apiSecret) {
@@ -494,11 +480,11 @@ async function handleCreatePayment(req: IncomingMessage, res: ServerResponse) {
       merchantOrderId: toTrimmedString(payload.merchant_order_id),
       merchantReference: toNullableString(payload.merchant_reference),
       amount: toNullableNumber(payload.amount),
-      currency: toNullableString(payload.currency),
-      payerReference: toNullableString(payload.payerReference),
-      customerName: toNullableString(payload.customer_name),
-      customerPhone: toNullableString(payload.customer_phone),
-      customerEmail: toNullableString(payload.customer_email),
+      currency: "BDT",
+      payerReference: null,
+      customerName: null,
+      customerPhone: null,
+      customerEmail: null,
       checkoutUrl: checkoutUrl || null,
       fastpspStatus: toNullableString(data.status),
       paymentId:
@@ -559,11 +545,11 @@ async function handleCreatePayment(req: IncomingMessage, res: ServerResponse) {
         `FAILED-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       merchantReference: toNullableString(payload.merchant_reference),
       amount: toNullableNumber(payload.amount),
-      currency: toNullableString(payload.currency),
-      payerReference: toNullableString(payload.payerReference),
-      customerName: toNullableString(payload.customer_name),
-      customerPhone: toNullableString(payload.customer_phone),
-      customerEmail: toNullableString(payload.customer_email),
+      currency: "BDT",
+      payerReference: null,
+      customerName: null,
+      customerPhone: null,
+      customerEmail: null,
       checkoutUrl: null,
       fastpspStatus: null,
       paymentId: null,
@@ -690,13 +676,15 @@ function registerFastPspMiddleware(
   next();
 }
 
-export function fastpspMiddlewarePlugin(): Plugin {
+export function fastpspMiddlewarePlugin(initialEnv: EnvMap = {}): Plugin {
   return {
     name: "fastpsp-middleware",
     configureServer(server) {
+      runtimeEnv = { ...(process.env as EnvMap), ...initialEnv };
       server.middlewares.use(registerFastPspMiddleware);
     },
     configurePreviewServer(server) {
+      runtimeEnv = { ...(process.env as EnvMap), ...initialEnv };
       server.middlewares.use(registerFastPspMiddleware);
     },
   };
