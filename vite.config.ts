@@ -7,5 +7,8 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), fastpspMiddlewarePlugin(env)],
+    preview: {
+      allowedHosts: ["localhost", "127.0.0.1", ".up.railway.app"],
+    },
   };
 });
