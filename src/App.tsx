@@ -265,9 +265,6 @@ function App() {
   const [transactionHistoryError, setTransactionHistoryError] = useState("");
   const [transactions, setTransactions] = useState<TransactionHistoryRow[]>([]);
   const [amount, setAmount] = useState("200.00");
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("880");
   const [modalError, setModalError] = useState("");
 
   const refreshBalance = async () => {
@@ -330,6 +327,7 @@ function App() {
     const merchantReference = `REF-${timestamp}-${random}`;
 
     try {
+      const callbackUrl = window.location.origin;
       const response = await fetch("/api/fastpsp/create-payment", {
         method: "POST",
         headers: {
@@ -339,14 +337,7 @@ function App() {
           merchant_order_id: merchantOrderId,
           merchant_reference: merchantReference,
           amount: numericAmount.toFixed(2),
-          currency: "BDT",
-          payerReference: phoneNumber.trim() || email.trim() || merchantReference,
-          customer_name: fullName.trim(),
-          customer_phone: phoneNumber.trim(),
-          customer_email: email.trim(),
-          success_url: `${window.location.origin}/payment/success`,
-          failure_url: `${window.location.origin}/payment/failure`,
-          cancel_url: `${window.location.origin}/payment/cancel`,
+          callback_url: callbackUrl,
         }),
       });
 
@@ -723,45 +714,6 @@ function App() {
                     {preset.toLocaleString("en-US")}
                   </button>
                 ))}
-              </div>
-
-              <div className="fastpsp-field-row">
-                <label htmlFor="fastpsp-fullname" className="fastpsp-field-label">
-                  First name and surname:
-                </label>
-                <input
-                  id="fastpsp-fullname"
-                  className="fastpsp-input"
-                  type="text"
-                  value={fullName}
-                  onChange={(event) => setFullName(event.target.value)}
-                />
-              </div>
-
-              <div className="fastpsp-field-row">
-                <label htmlFor="fastpsp-email" className="fastpsp-field-label">
-                  Email:
-                </label>
-                <input
-                  id="fastpsp-email"
-                  className="fastpsp-input"
-                  type="text"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-              </div>
-
-              <div className="fastpsp-field-row">
-                <label htmlFor="fastpsp-phone" className="fastpsp-field-label">
-                  Phone number:
-                </label>
-                <input
-                  id="fastpsp-phone"
-                  className="fastpsp-input"
-                  type="text"
-                  value={phoneNumber}
-                  onChange={(event) => setPhoneNumber(event.target.value)}
-                />
               </div>
 
               <button
