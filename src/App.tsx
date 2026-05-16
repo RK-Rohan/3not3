@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+﻿import { useEffect, useState } from "react";
 
 type MethodTile = {
   label: string;
@@ -255,6 +255,42 @@ function formatDateTime(value: string) {
   });
 }
 
+function normalizeStatus(value: string | null | undefined) {
+  return (value || "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+}
+
+function isSuccessfulStatus(value: string | null | undefined) {
+  const normalized = normalizeStatus(value);
+  return (
+    normalized === "SUCCESS" ||
+    normalized === "SUCCEEDED" ||
+    normalized === "COMPLETED" ||
+    normalized === "PAID"
+  );
+}
+
+function parseAmount(value: string | number | null) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const numeric = Number(value.replaceAll(",", "").trim());
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+  }
+  return 0;
+}
+
+function calculateBalanceFromTransactions(rows: TransactionHistoryRow[]) {
+  const total = rows.reduce((sum, row) => {
+    if (!isSuccessfulStatus(row.webhook_status || row.fastpsp_status)) {
+      return sum;
+    }
+    return sum + parseAmount(row.amount);
+  }, 0);
+  return Number(Math.max(0, total).toFixed(2));
+}
 function App() {
   const [balance, setBalance] = useState(() => readStoredBalance());
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false);
@@ -267,26 +303,51 @@ function App() {
   const [amount, setAmount] = useState("200.00");
   const [modalError, setModalError] = useState("");
 
+  const fetchTransactions = async (withLoading = true) => {
+    if (withLoading) {
+      setIsLoadingTransactions(true);
+    }
+    setTransactionHistoryError("");
+    try {
+      const response = await fetch("/api/fastpsp/transactions?limit=100");
+      const payload = (await response.json()) as {
+        success?: boolean;
+        transactions?: TransactionHistoryRow[];
+        message?: string;
+      };
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || "Failed to load transaction history.");
+      }
+
+      const rows = Array.isArray(payload.transactions) ? payload.transactions : [];
+      setTransactions(rows);
+      return rows;
+    } catch (error) {
+      setTransactionHistoryError(
+        error instanceof Error ? error.message : "Unable to load transaction history.",
+      );
+      return [];
+    } finally {
+      if (withLoading) {
+        setIsLoadingTransactions(false);
+      }
+    }
+  };
   const refreshBalance = async () => {
     if (isRefreshingBalance) {
       return;
     }
 
     setIsRefreshingBalance(true);
-
-    await new Promise<void>((resolve) => {
-      window.setTimeout(() => resolve(), 380);
-    });
-
-    const currentBalance = readStoredBalance();
-    const nextBalance =
-      currentBalance <= 0
-        ? Number((Math.random() * 1200 + 50).toFixed(2))
-        : Number(Math.max(0, currentBalance + (Math.random() * 90 - 45)).toFixed(2));
-
-    writeStoredBalance(nextBalance);
-    setBalance(nextBalance);
-    setIsRefreshingBalance(false);
+    try {
+      const rows = await fetchTransactions(false);
+      const nextBalance = calculateBalanceFromTransactions(rows);
+      writeStoredBalance(nextBalance);
+      setBalance(nextBalance);
+    } finally {
+      setIsRefreshingBalance(false);
+    }
   };
 
   const openFastPspModal = () => {
@@ -362,34 +423,9 @@ function App() {
     }
   };
 
-  const fetchTransactions = async () => {
-    setIsLoadingTransactions(true);
-    setTransactionHistoryError("");
-    try {
-      const response = await fetch("/api/fastpsp/transactions?limit=100");
-      const payload = (await response.json()) as {
-        success?: boolean;
-        transactions?: TransactionHistoryRow[];
-        message?: string;
-      };
-
-      if (!response.ok || !payload.success) {
-        throw new Error(payload.message || "Failed to load transaction history.");
-      }
-
-      setTransactions(Array.isArray(payload.transactions) ? payload.transactions : []);
-    } catch (error) {
-      setTransactionHistoryError(
-        error instanceof Error ? error.message : "Unable to load transaction history.",
-      );
-    } finally {
-      setIsLoadingTransactions(false);
-    }
-  };
-
   const openTransactionHistory = () => {
     setIsTransactionHistoryOpen(true);
-    void fetchTransactions();
+    void fetchTransactions(true);
   };
 
   const closeTransactionHistory = () => {
@@ -398,6 +434,10 @@ function App() {
     }
     setIsTransactionHistoryOpen(false);
   };
+
+  useEffect(() => {
+    void refreshBalance();
+  }, []);
 
   return (
     <div className="melbet-page">
@@ -795,3 +835,5 @@ function logoPath(logo: NonNullable<MethodTile["logo"]>) {
 }
 
 export default App;
+
+

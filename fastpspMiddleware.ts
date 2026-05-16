@@ -1,5 +1,4 @@
-﻿import { createHmac, timingSafeEqual } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
+﻿import type { IncomingMessage, ServerResponse } from "node:http";
 import { Pool } from "pg";
 import type { Plugin } from "vite";
 
@@ -136,6 +135,12 @@ function buildFastPspPayload(clientBody: JsonObject, origin: string) {
     clientBody.merchant_reference.trim()
       ? clientBody.merchant_reference.trim()
       : generated.reference;
+  const webhookUrlFromClient =
+    typeof clientBody.webhook_url === "string" && clientBody.webhook_url.trim()
+      ? clientBody.webhook_url.trim()
+      : "";
+  const webhookUrlFromEnv = readEnv("FASTPSP_WEBHOOK_URL");
+  const resolvedWebhookUrl = webhookUrlFromClient || webhookUrlFromEnv;
 
   return {
     merchant_order_id:
@@ -149,6 +154,7 @@ function buildFastPspPayload(clientBody: JsonObject, origin: string) {
       typeof clientBody.callback_url === "string" && clientBody.callback_url.trim()
         ? clientBody.callback_url.trim()
         : defaultCallbackUrl(origin),
+    ...(resolvedWebhookUrl ? { webhook_url: resolvedWebhookUrl } : {}),
   };
 }
 
@@ -209,22 +215,31 @@ function normalizeBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, "");
 }
 
-function verifyWebhookSignature(rawBody: string, timestamp: string, signature: string) {
-  const secret = readEnv("FASTPSP_API_SECRET");
-  if (!secret || !timestamp || !signature) {
-    return false;
+function normalizePayloadKey(input: string) {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function getPayloadValue(payload: JsonObject, ...candidateKeys: string[]) {
+  for (const key of candidateKeys) {
+    const direct = payload[key];
+    if (direct !== undefined && direct !== null) {
+      return direct;
+    }
   }
 
-  const base = `${timestamp}.${rawBody}`;
-  const expected = createHmac("sha256", secret).update(base).digest("hex");
-  const signatureBuffer = Buffer.from(signature, "utf8");
-  const expectedBuffer = Buffer.from(expected, "utf8");
-
-  if (signatureBuffer.length !== expectedBuffer.length) {
-    return false;
+  const lookup = new Map<string, unknown>();
+  for (const [key, value] of Object.entries(payload)) {
+    lookup.set(normalizePayloadKey(key), value);
   }
 
-  return timingSafeEqual(signatureBuffer, expectedBuffer);
+  for (const key of candidateKeys) {
+    const value = lookup.get(normalizePayloadKey(key));
+    if (value !== undefined && value !== null) {
+      return value;
+    }
+  }
+
+  return undefined;
 }
 
 function getDbPool() {
@@ -380,8 +395,29 @@ async function persistWebhook(payload: JsonObject) {
   await ensureSchema();
 
   const merchantOrderId =
-    toTrimmedString(payload.merchantOrderId) ||
-    `UNKNOWN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    toTrimmedString(
+      getPayloadValue(
+        payload,
+        "merchant_order_id",
+        "order_id",
+        "merchantOrderId",
+        "orderId",
+      ),
+    ) || `UNKNOWN-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const merchantReference = toNullableString(
+    getPayloadValue(payload, "merchant_reference", "ref", "merchantReference"),
+  );
+  const amount = toNullableNumber(getPayloadValue(payload, "amount"));
+  const currency = toNullableString(getPayloadValue(payload, "currency"));
+  const paymentId = toNullableString(
+    getPayloadValue(payload, "payment_id", "paymentId"),
+  );
+  const localPaymentId = toNullableString(
+    getPayloadValue(payload, "local_payment_id", "localPaymentId"),
+  );
+  const provider = toNullableString(getPayloadValue(payload, "provider"));
+  const trxId = toNullableString(getPayloadValue(payload, "trx_id", "trxId"));
+  const status = toNullableString(getPayloadValue(payload, "status"));
 
   await pool.query(
     `
@@ -417,14 +453,14 @@ async function persistWebhook(payload: JsonObject) {
     `,
     [
       merchantOrderId,
-      toNullableString(payload.merchantReference),
-      toNullableNumber(payload.amount),
-      toNullableString(payload.currency),
-      toNullableString(payload.paymentId),
-      toNullableString(payload.localPaymentId),
-      toNullableString(payload.provider),
-      toNullableString(payload.trxId),
-      toNullableString(payload.status),
+      merchantReference,
+      amount,
+      currency,
+      paymentId,
+      localPaymentId,
+      provider,
+      trxId,
+      status,
       JSON.stringify(payload),
     ],
   );
@@ -573,30 +609,18 @@ async function handleCreatePayment(req: IncomingMessage, res: ServerResponse) {
 async function handleWebhook(req: IncomingMessage, res: ServerResponse) {
   const rawBody = await readRawBody(req);
   const payload = safeJsonParse<JsonObject>(rawBody, {});
-  const timestamp =
-    typeof req.headers["x-fastpsp-timestamp"] === "string"
-      ? req.headers["x-fastpsp-timestamp"]
-      : "";
-  const signature =
-    typeof req.headers["x-fastpsp-signature"] === "string"
-      ? req.headers["x-fastpsp-signature"]
-      : "";
-
-  const valid = verifyWebhookSignature(rawBody, timestamp, signature);
-
-  if (!valid) {
-    sendJson(res, 401, { success: false, message: "Invalid webhook signature." });
-    return;
-  }
+  const event = toNullableString(getPayloadValue(payload, "event"));
+  const status = toNullableString(getPayloadValue(payload, "status"));
+  const paymentId = toNullableString(getPayloadValue(payload, "payment_id", "paymentId"));
 
   await persistWebhook(payload);
 
   sendJson(res, 200, {
     success: true,
     received: true,
-    event: payload.event ?? null,
-    status: payload.status ?? null,
-    paymentId: payload.paymentId ?? null,
+    event,
+    status,
+    paymentId,
   });
 }
 
@@ -663,7 +687,10 @@ function registerFastPspMiddleware(
     return;
   }
 
-  if (pathname === "/api/fastpsp/webhook" && method.toUpperCase() === "POST") {
+  if (
+    (pathname === "/api/fastpsp/webhook" || pathname === "/fastpsp/webhook") &&
+    method.toUpperCase() === "POST"
+  ) {
     void handleWebhook(req, res);
     return;
   }
@@ -689,3 +716,4 @@ export function fastpspMiddlewarePlugin(initialEnv: EnvMap = {}): Plugin {
     },
   };
 }
+

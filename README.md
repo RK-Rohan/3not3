@@ -1,16 +1,16 @@
-# Merchant Deposit Demo (FastPSP Integrated)
+﻿# Merchant Deposit Demo (FastPSP Integrated)
 
 A Melbet-style merchant deposit UI with server-side FastPSP integration.
 
 ## What is integrated
 
 1. `RECOMMENDED > Bkash (fastPSP)` card opens FastPSP modal.
-2. Modal `CONFIRM` calls secure backend endpoint: `POST /api/fastpsp/create-payment`.
+2. Modal `CONFIRM` calls backend endpoint: `POST /api/fastpsp/create-payment`.
 3. Backend forwards to FastPSP using:
    - `x-api-key`
    - `x-api-secret`
 4. Frontend redirects customer to FastPSP hosted checkout URL from response.
-5. Webhook endpoint included: `POST /api/fastpsp/webhook` with HMAC signature verification.
+5. Webhook endpoint is enabled in simple mode (no signature check).
 
 ## Environment setup
 
@@ -23,7 +23,11 @@ Copy `.env.example` to `.env` and fill:
 - `DATABASE_URL`
 - `DATABASE_SSL`
 
-Important: keep `FASTPSP_API_SECRET` private. Never expose it in frontend code.
+Notes:
+
+- `FASTPSP_WEBHOOK_URL` is sent to FastPSP during `create-payment`.
+- You can set it to either `/api/fastpsp/webhook` or `/fastpsp/webhook` URL.
+- Keep `FASTPSP_API_SECRET` private. Never expose it in frontend code.
 
 ## Run
 
@@ -36,6 +40,7 @@ Vite middleware routes provided by `fastpspMiddleware.ts`:
 
 - `POST /api/fastpsp/create-payment`
 - `POST /api/fastpsp/webhook`
+- `POST /fastpsp/webhook`
 - `GET /api/fastpsp/transactions?limit=100`
 
 ## Transaction history storage
@@ -47,17 +52,8 @@ When `DATABASE_URL` is configured:
 3. Webhook status updates are merged into matching transactions.
 4. UI `Transaction history` menu loads records from `/api/fastpsp/transactions`.
 
-## Webhook verification rule
+## Webhook payload handling (simple mode)
 
-Signature string:
-
-`${timestamp}.${rawBody}`
-
-Computed with:
-
-- `HMAC-SHA256`
-- secret: `FASTPSP_API_SECRET`
-
-Compared against request header:
-
-- `X-FastPSP-Signature`
+- Middleware accepts both snake_case and camelCase keys.
+- Matching keys are treated case-insensitively (for example `payment_id`, `paymentId`, `PaymentID`).
+- Important fields matched include order id, payment id, local payment id, reference, trx id, and status.
