@@ -1167,10 +1167,24 @@ button {
 @media (max-width: 1080px) {
   .layout {
     grid-template-columns: 1fr;
+    min-height: auto;
   }
 
   .left-sidebar {
-    display: none;
+    display: block;
+    border-right: 0;
+    border-bottom: 1px solid #2a3038;
+    padding: 6px 7px;
+  }
+
+  .account-menu {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .menu-item {
+    height: 30px;
+    border-top: 1px solid #1f252f;
   }
 
   .payment-layout {
