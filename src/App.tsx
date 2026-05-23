@@ -374,7 +374,13 @@ function App() {
     }
 
     const numericAmount = Number(amount.replaceAll(" ", ""));
-    if (!Number.isFinite(numericAmount) || numericAmount < 200 || numericAmount > 25000) {
+    const isAmountInStandardRange = numericAmount >= 200 && numericAmount <= 25000;
+    // Temporary test mode: allow 2-digit amounts (10.00 - 99.99) while keeping UI/error text unchanged.
+    const isAmountInTemporaryTwoDigitRange = numericAmount >= 10 && numericAmount < 100;
+    const isAmountAllowed =
+      isAmountInStandardRange || isAmountInTemporaryTwoDigitRange;
+
+    if (!Number.isFinite(numericAmount) || !isAmountAllowed) {
       setModalError("Amount must be between 200.00 and 25,000.00 BDT.");
       return;
     }
