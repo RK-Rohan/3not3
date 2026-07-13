@@ -25,6 +25,12 @@ function loadEnvFile(filePath: string, overwrite = false) {
     const key = trimmed.slice(0, equalsIndex).trim();
     let value = trimmed.slice(equalsIndex + 1).trim();
 
+    // Placeholder values in committed env files must never shadow real
+    // variables injected by the host (e.g. Railway).
+    if (value === "REPLACE_IN_RAILWAY") {
+      continue;
+    }
+
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
@@ -39,7 +45,7 @@ function loadEnvFile(filePath: string, overwrite = false) {
 }
 
 loadEnvFile(".env");
-loadEnvFile(".env.prod", true);
+loadEnvFile(".env.prod");
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
